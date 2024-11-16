@@ -9,6 +9,8 @@ import { bytesFromAnyString, useGetExplorerLink } from "@/src/utils";
 import { useApp } from "@/src/context";
 import { ButtonsPanel } from "@/src/components/ButtonsPanel";
 
+const PAYMASTER_CELL_CAPACITY = 316;
+
 export default function Transfer() {
   const { signer, createSender } = useApp();
   const { log, error } = createSender("Transfer");
@@ -28,8 +30,8 @@ export default function Transfer() {
         state={[transferTo, setTransferTo]}
       />
       <TextInput
-        label="Amount"
-        placeholder="Amount to transfer for each"
+        label="Number of Paymaster Cells"
+        placeholder={`Number of Paymaster Cells (${PAYMASTER_CELL_CAPACITY} CKB per cell)`}
         state={[amount, setAmount]}
       />
       <Textarea
@@ -80,10 +82,11 @@ export default function Transfer() {
             if (!signer) {
               return;
             }
+
+            const numberOfPayMasterCells = parseInt(amount);
             // Verify destination addresses
             const toAddresses = await Promise.all(
-              transferTo
-                .split("\n")
+              new Array(numberOfPayMasterCells).fill(transferTo)
                 .map((addr) => ccc.Address.fromString(addr, signer.client)),
             );
 
@@ -98,7 +101,7 @@ export default function Transfer() {
                 error(`Insufficient capacity at output ${i} to store data`);
                 return;
               }
-              output.capacity = ccc.fixedPointFrom(amount);
+              output.capacity = ccc.fixedPointFrom(PAYMASTER_CELL_CAPACITY);
             });
 
             // Complete missing parts for transaction
