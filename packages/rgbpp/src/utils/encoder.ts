@@ -1,6 +1,4 @@
-import { Hex } from "@ckb-ccc/shell";
-
-import { bytesToHex } from "@nervosnetwork/ckb-sdk-utils";
+import { Hex, hexFrom } from "@ckb-ccc/shell";
 
 export const trimHexPrefix = (hex: string): string =>
   hex.startsWith("0x") ? hex.substring(2) : hex;
@@ -30,8 +28,7 @@ export const utf8ToHex = (text: string): Hex => {
   if (result.startsWith("0x")) {
     return result as Hex;
   }
-  result = bytesToHex(new TextEncoder().encode(result));
-  return result as Hex;
+  return hexFrom(new TextEncoder().encode(result));
 };
 
 export const reverseHexByteOrder = (hex: Hex): Hex => {

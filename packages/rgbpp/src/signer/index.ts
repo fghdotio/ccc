@@ -1,7 +1,5 @@
 import * as bitcoin from "bitcoinjs-lib";
 
-import { serializeWitnessArgs } from "@nervosnetwork/ckb-sdk-utils";
-
 import {
   ccc,
   SignerSignType,
@@ -17,7 +15,7 @@ import { SimpleBtcClient } from "../interfaces/btc.js";
 import { SpvProofProvider } from "../interfaces/spv.js";
 import { PredefinedScriptName } from "../types/script.js";
 import { SpvProof } from "../types/spv.js";
-import { prependHexPrefix, trimHexPrefix } from "../utils/encoder.js";
+import { trimHexPrefix } from "../utils/encoder.js";
 import {
   btcTxIdInReverseByteOrder,
   buildRgbppUnlock,
@@ -299,13 +297,11 @@ export class CkbRgbppUnlockSinger extends ccc.Signer {
       tx.outputs.length,
     );
 
-    const rgbppWitness = prependHexPrefix(
-      serializeWitnessArgs({
-        lock: rgbppUnlock,
-        inputType: "",
-        outputType: "",
-      }),
-    );
+    const rgbppWitness = ccc.WitnessArgs.from({
+      lock: rgbppUnlock,
+      inputType: "",
+      outputType: "",
+    }).toBytes();
 
     tx.inputs.forEach((_, index) => {
       tx.setWitnessAt(index, rgbppWitness);
