@@ -1,6 +1,5 @@
 import { ccc, spore } from "@ckb-ccc/shell";
-
-import { RawSporeData } from "@spore-sdk/core";
+import { SporeDataView } from "@ckb-ccc/spore/advanced";
 
 import { ckbClient, ckbSigner, initializeRgbppEnv } from "../common/env.js";
 
@@ -12,7 +11,7 @@ async function createSpore({
 }: {
   receiverInfo: {
     btcAddress: string;
-    rawSporeData: RawSporeData;
+    rawSporeData: SporeDataView;
   };
 }) {
   const {
@@ -74,12 +73,12 @@ const logger = new RgbppTxLogger({ opType: "spore-creation" });
 
 createSpore({
   receiverInfo: {
-    btcAddress: "tb1qe8xc5ay5sdh0r58v0xfxrtss47kxveyzncs5ja",
+    btcAddress: "tb1qjkdqj8zk6gl7pwuw2d2jp9e6wgf26arjl8pcys",
     rawSporeData: {
       contentType: "text/plain",
       content: ccc.bytesFrom("First Spore Live", "utf8"),
       clusterId:
-        "0xb62e12e6f0550b61e47f9bb2e6de3cedc6a17abd5691d390cd234c06041a4558",
+        "0xaa116bb68f7461a8bf42f51bdc4ae130da3546088a42b587ade53369e39e28d6",
     },
   },
 })
