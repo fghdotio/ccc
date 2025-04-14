@@ -35,6 +35,10 @@ export class RgbppUdtClient {
     return this.scriptManager.getScriptInfos();
   }
 
+  getRgbppScriptInfoByName(name: PredefinedScriptName) {
+    return this.scriptManager.getScriptInfoByName(name);
+  }
+
   rgbppLockScriptTemplate() {
     return this.scriptManager.getScriptInfoByName(
       PredefinedScriptName.RgbppLock,

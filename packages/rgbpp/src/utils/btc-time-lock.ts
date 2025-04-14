@@ -1,7 +1,5 @@
 import { ccc } from "@ckb-ccc/shell";
 
-import { bytesToHex, serializeWitnessArgs } from "@nervosnetwork/ckb-sdk-utils";
-
 import { HashType } from "../schemas/customized.js";
 import { BTCTimeLock, BTCTimeUnlock } from "../schemas/generated/rgbpp.js";
 
@@ -38,11 +36,12 @@ export const parseBtcTimeLockArgs = (
 
 export const buildBtcTimeUnlockWitness = (btcTxProof: string): ccc.Hex => {
   const btcTimeUnlock = BTCTimeUnlock.pack({ btcTxProof });
-  return prependHexPrefix(
-    serializeWitnessArgs({
-      lock: prependHexPrefix(bytesToHex(btcTimeUnlock)),
+
+  return ccc.hexFrom(
+    ccc.WitnessArgs.from({
+      lock: prependHexPrefix(ccc.hexFrom(btcTimeUnlock)),
       inputType: "",
       outputType: "",
-    }),
+    }).toBytes(),
   );
 };
