@@ -1,15 +1,8 @@
 import { sha256 } from "js-sha256";
 
-import { bytesFrom, ccc, Hex, hexFrom } from "@ckb-ccc/shell";
+import { ccc } from "@ckb-ccc/shell";
 
 import { blockchain } from "@ckb-lumos/base";
-import {
-  blake2b,
-  hexToBytes,
-  PERSONAL,
-  serializeOutPoint,
-  serializeOutput,
-} from "@nervosnetwork/ckb-sdk-utils";
 
 import { convertToOutput, InitOutput, TxOutput } from "../bitcoin/index.js";
 
@@ -29,7 +22,6 @@ import {
 } from "../schemas/generated/rgbpp.js";
 import { RgbppUdtToken, UtxoSeal } from "../types/rgbpp/rgbpp.js";
 import { RgbppUdtClient } from "../udt/index.js";
-import { isSameScriptTemplate, isUsingOneOfScripts } from "./script.js";
 import {
   prependHexPrefix,
   reverseHexByteOrder,
@@ -40,6 +32,7 @@ import {
   u8ToHex,
   utf8ToHex,
 } from "./encoder.js";
+import { isSameScriptTemplate, isUsingOneOfScripts } from "./script.js";
 
 export const encodeRgbppUdtToken = (token: RgbppUdtToken): string => {
   const decimal = u8ToHex(token.decimal);
@@ -55,7 +48,7 @@ export const encodeRgbppUdtToken = (token: RgbppUdtToken): string => {
  * Whenever you're working with transaction/block hashes internally (e.g. inside raw bitcoin data), you use the natural byte order.
  * Whenever you're displaying or searching for transaction/block hashes, you use the reverse byte order.
  */
-export const buildRgbppLockArgs = (utxoSeal: UtxoSeal): Hex => {
+export const buildRgbppLockArgs = (utxoSeal: UtxoSeal): ccc.Hex => {
   return prependHexPrefix(
     `${u32ToHex(utxoSeal.index, true)}${btcTxIdInReverseByteOrder(
       utxoSeal.txId,
@@ -67,14 +60,14 @@ export function btcTxIdInReverseByteOrder(btcTxId: string): string {
   return trimHexPrefix(reverseHexByteOrder(prependHexPrefix(btcTxId)));
 }
 
-export function pseudoRgbppLockArgs(): Hex {
+export function pseudoRgbppLockArgs(): ccc.Hex {
   return buildRgbppLockArgs({
     txId: TX_ID_PLACEHOLDER,
     index: BTC_TX_PSEUDO_INDEX,
   });
 }
 
-export function pseudoRgbppLockArgsForCommitment(index: number): Hex {
+export function pseudoRgbppLockArgsForCommitment(index: number): ccc.Hex {
   return buildRgbppLockArgs({
     txId: BLANK_TX_ID,
     index,
@@ -85,12 +78,12 @@ export const buildBtcTimeLockArgs = (
   receiverLock: ccc.Script,
   btcTxId: string,
   confirmations = DEFAULT_CONFIRMATIONS,
-): Hex => {
+): ccc.Hex => {
   const btcTxid = blockchain.Byte32.pack(
     reverseHexByteOrder(prependHexPrefix(btcTxId)),
   );
   const lockScript = Script.unpack(receiverLock.toBytes());
-  return hexFrom(
+  return ccc.hexFrom(
     BTCTimeLock.pack({
       lockScript,
       after: confirmations,
@@ -99,24 +92,35 @@ export const buildBtcTimeLockArgs = (
   );
 };
 
+// export const buildUniqueTypeArgs = (
+//   firstInput: ccc.CellInput,
+//   firstOutputIndex: number,
+// ) => {
+//   const input = ccc.bytesFrom(firstInput.toBytes());
+//   const s = blake2b(32, null, null, PERSONAL);
+//   s.update(input);
+//   s.update(ccc.bytesFrom(prependHexPrefix(u64ToLe(BigInt(firstOutputIndex)))));
+//   return prependHexPrefix(`${s.digest("hex").slice(0, 40)}`);
+// };
+
 export const buildUniqueTypeArgs = (
   firstInput: ccc.CellInput,
   firstOutputIndex: number,
 ) => {
-  const input = bytesFrom(firstInput.toBytes());
-  const s = blake2b(32, null, null, PERSONAL);
+  const input = ccc.bytesFrom(firstInput.toBytes());
+  const s = new ccc.HasherCkb();
   s.update(input);
-  s.update(bytesFrom(prependHexPrefix(u64ToLe(BigInt(firstOutputIndex)))));
-  return prependHexPrefix(`${s.digest("hex").slice(0, 40)}`);
+  s.update(ccc.bytesFrom(prependHexPrefix(u64ToLe(BigInt(firstOutputIndex)))));
+  return s.digest().slice(0, 42);
 };
 
 export const buildRgbppUnlock = (
   btcLikeTxBytes: string,
-  btcLikeTxProof: Hex,
+  btcLikeTxProof: ccc.Hex,
   inputLen: number,
   outputLen: number,
 ) => {
-  return hexFrom(
+  return ccc.hexFrom(
     RGBPPUnlock.pack({
       version: Uint16.pack([0, 0]),
       extraData: {
@@ -133,7 +137,7 @@ export const buildRgbppUnlock = (
 // refer to https://github.com/ckb-cell/rgbpp/blob/0c090b039e8d026aad4336395b908af283a70ebf/contracts/rgbpp-lock/src/main.rs#L173-L211
 export const calculateCommitment = (ckbPartialTx: ccc.Transaction): string => {
   const hash = sha256.create();
-  hash.update(hexToBytes(utf8ToHex("RGB++")));
+  hash.update(ccc.bytesFrom(utf8ToHex("RGB++")));
   const version = [0, 0];
   hash.update(version);
 
@@ -150,24 +154,15 @@ export const calculateCommitment = (ckbPartialTx: ccc.Transaction): string => {
   hash.update([inputs.length, outputs.length]);
 
   for (const input of inputs) {
-    const outPoint = {
-      ...input.previousOutput,
-      index: prependHexPrefix(`${input.previousOutput.index.toString(16)}`),
-    };
-    hash.update(hexToBytes(serializeOutPoint(outPoint)));
+    hash.update(ccc.bytesFrom(input.previousOutput.toBytes()));
   }
   for (let index = 0; index < outputs.length; index++) {
-    const output = {
-      capacity: prependHexPrefix(`${outputs[index].capacity.toString(16)}`),
-      lock: outputs[index].lock,
-      type: outputs[index].type,
-    };
     const outputData = outputsData[index];
-    hash.update(hexToBytes(serializeOutput(output)));
+    hash.update(ccc.bytesFrom(outputs[index].toBytes()));
 
     const outputDataLen = u32ToLe(trimHexPrefix(outputData).length / 2);
-    const odl = hexToBytes(prependHexPrefix(outputDataLen));
-    const od = hexToBytes(outputData);
+    const odl = ccc.bytesFrom(prependHexPrefix(outputDataLen));
+    const od = ccc.bytesFrom(outputData);
     hash.update(odl);
     hash.update(od);
   }
