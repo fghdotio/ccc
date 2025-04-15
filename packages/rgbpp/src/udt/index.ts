@@ -11,13 +11,13 @@ import { NetworkConfig, UtxoSeal } from "../types/index.js";
 import { RgbppUdtIssuance } from "../types/rgbpp/udt.js";
 import { PredefinedScriptName } from "../types/script.js";
 import {
+  deduplicateByOutPoint,
   encodeRgbppUdtToken,
   isUsingOneOfScripts,
   u128ToLe,
   updateScriptArgsWithTxId,
 } from "../utils/index.js";
 
-// TODO: rgbppLiveCells, btcTimeLockCells de-duplication
 export class RgbppUdtClient {
   private scriptManager: ScriptManager;
 
@@ -113,8 +113,10 @@ export class RgbppUdtClient {
       throw new Error("rgbppLiveCells is empty");
     }
 
+    const rgpbbLiveCells = deduplicateByOutPoint(params.rgbppLiveCells);
+
     const tx = ccc.Transaction.default();
-    params.rgbppLiveCells.forEach((cell) => {
+    rgpbbLiveCells.forEach((cell) => {
       const cellInput = ccc.CellInput.from({
         previousOutput: cell.outPoint,
       });
