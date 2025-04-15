@@ -15,6 +15,7 @@ import { SimpleBtcClient } from "../interfaces/btc.js";
 import { SpvProofProvider } from "../interfaces/spv.js";
 import { PredefinedScriptName } from "../types/script.js";
 import { SpvProof } from "../types/spv.js";
+import { deduplicateByOutPoint } from "../utils/common.js";
 import { trimHexPrefix } from "../utils/encoder.js";
 import {
   btcTxIdInReverseByteOrder,
@@ -175,16 +176,7 @@ export class CkbRgbppUnlockSinger extends ccc.Signer {
       );
     }
 
-    cellDeps = [...cellDeps, ...tx.cellDeps];
-
-    const uniqueCellDepsMap = new Map<string, ccc.CellDep>();
-
-    cellDeps.forEach((cellDep) => {
-      const key = `${cellDep.outPoint.txHash}-${cellDep.outPoint.index}`;
-      uniqueCellDepsMap.set(key, cellDep);
-    });
-
-    return Array.from(uniqueCellDepsMap.values());
+    return deduplicateByOutPoint([...cellDeps, ...tx.cellDeps]);
   }
 
   async prepareTransaction(txLike: TransactionLike): Promise<Transaction> {
