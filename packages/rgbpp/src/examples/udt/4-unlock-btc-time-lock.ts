@@ -2,7 +2,7 @@ import { ccc } from "@ckb-ccc/shell";
 
 import {
   buildBtcTimeUnlockWitness,
-  deduplicateCellDeps,
+  deduplicateByOutPoint,
   parseBtcTimeLockArgs,
   pollForSpvProof,
 } from "../../utils/index.js";
@@ -79,7 +79,7 @@ async function unlockBtcTimeLock(btcTimeLockArgs: string) {
 
     tx.witnesses.push(buildBtcTimeUnlockWitness(spvProof.proof));
   }
-  tx.cellDeps = deduplicateCellDeps(tx.cellDeps);
+  tx.cellDeps = deduplicateByOutPoint(tx.cellDeps);
 
   await tx.completeFeeBy(ckbSigner);
   const signedTx = await ckbSigner.signTransaction(tx);
@@ -92,7 +92,7 @@ async function unlockBtcTimeLock(btcTimeLockArgs: string) {
 const logger = new RgbppTxLogger({ opType: "unlock-btc-time-lock" });
 
 unlockBtcTimeLock(
-  "0x7d00000010000000590000005d000000490000001000000030000000310000009bd7e06f3ecf4be0f2fcd2188b23f1b9fcc88e5d4b65a8637b17723bbda3cce8011400000021e782eeb1c9893b341ed71c2dfe6fa496a6435c060000003c24862a5f19effa231268f0a203f5e89c5c1b0fb1efb80e9233c4e00716d93f",
+  "0x7d00000010000000590000005d000000490000001000000030000000310000009bd7e06f3ecf4be0f2fcd2188b23f1b9fcc88e5d4b65a8637b17723bbda3cce8011400000021e782eeb1c9893b341ed71c2dfe6fa496a6435c0600000012e53749a0f20daf9a062f2adc03808dd47e13569aebd61c8a259c1686820cb9",
 )
   .then(() => {
     logger.saveOnSuccess();
