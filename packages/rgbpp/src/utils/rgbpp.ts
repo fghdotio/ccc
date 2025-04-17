@@ -13,14 +13,9 @@ import {
   RGBPP_MAX_CELL_NUM,
   TX_ID_PLACEHOLDER,
 } from "../constants/index.js";
-import { Script } from "../schemas/generated/blockchain.js";
 
-import {
-  BTCTimeLock,
-  RGBPPUnlock,
-  Uint16,
-} from "../schemas/generated/rgbpp.js";
-import { RgbppUdtToken, UtxoSeal } from "../types/rgbpp/rgbpp.js";
+import { BTCTimeLock } from "../schemas/generated/rgbpp.js";
+import { RgbppUdtToken, RgbppUnlock, UtxoSeal } from "../types/rgbpp/rgbpp.js";
 import { RgbppUdtClient } from "../udt/index.js";
 import {
   prependHexPrefix,
@@ -33,6 +28,8 @@ import {
   utf8ToHex,
 } from "./encoder.js";
 import { isSameScriptTemplate, isUsingOneOfScripts } from "./script.js";
+
+import { Script } from "../schemas/generated/blockchain.js";
 
 export const encodeRgbppUdtToken = (token: RgbppUdtToken): string => {
   const decimal = u8ToHex(token.decimal);
@@ -83,6 +80,7 @@ export const buildBtcTimeLockArgs = (
     reverseHexByteOrder(prependHexPrefix(btcTxId)),
   );
   const lockScript = Script.unpack(receiverLock.toBytes());
+
   return ccc.hexFrom(
     BTCTimeLock.pack({
       lockScript,
@@ -121,11 +119,11 @@ export const buildRgbppUnlock = (
   outputLen: number,
 ) => {
   return ccc.hexFrom(
-    RGBPPUnlock.pack({
-      version: Uint16.pack([0, 0]),
+    RgbppUnlock.encode({
+      version: 0,
       extraData: {
-        inputLen: u8ToHex(inputLen),
-        outputLen: u8ToHex(outputLen),
+        inputLen,
+        outputLen,
       },
       btcTx: prependHexPrefix(btcLikeTxBytes),
       btcTxProof: prependHexPrefix(btcLikeTxProof),
