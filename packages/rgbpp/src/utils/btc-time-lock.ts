@@ -1,17 +1,8 @@
 import { ccc } from "@ckb-ccc/shell";
 
-import { HashType } from "../schemas/customized.js";
-import { BTCTimeLock, BTCTimeUnlock } from "../schemas/generated/rgbpp.js";
-
+import { BtcTimeLock, BtcTimeUnlock } from "../types/rgbpp/rgbpp.js";
 import { prependHexPrefix, reverseHexByteOrder } from "./encoder.js";
 
-/*
-table BTCTimeLock {
-  lock_script: Script,
-  after: Uint32,
-  btc_txid: Byte32,
-}
-*/
 export const parseBtcTimeLockArgs = (
   args: string,
 ): {
@@ -23,19 +14,17 @@ export const parseBtcTimeLockArgs = (
     lockScript,
     after: confirmations,
     btcTxid: btcTxId,
-  } = BTCTimeLock.unpack(prependHexPrefix(args));
+  } = BtcTimeLock.decode(prependHexPrefix(args));
+
   return {
-    lock: ccc.Script.from({
-      ...lockScript,
-      hashType: HashType.unpack(lockScript.hashType),
-    }),
-    confirmations,
+    lock: lockScript,
+    confirmations: Number(confirmations),
     btcTxId: reverseHexByteOrder(prependHexPrefix(btcTxId)),
   };
 };
 
 export const buildBtcTimeUnlockWitness = (btcTxProof: string): ccc.Hex => {
-  const btcTimeUnlock = BTCTimeUnlock.pack({ btcTxProof });
+  const btcTimeUnlock = BtcTimeUnlock.encode({ btcTxProof });
 
   return ccc.hexFrom(
     ccc.WitnessArgs.from({

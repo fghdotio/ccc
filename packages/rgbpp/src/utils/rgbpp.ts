@@ -2,8 +2,6 @@ import { sha256 } from "js-sha256";
 
 import { ccc } from "@ckb-ccc/shell";
 
-import { blockchain } from "@ckb-lumos/base";
-
 import { convertToOutput, InitOutput, TxOutput } from "../bitcoin/index.js";
 
 import {
@@ -14,8 +12,12 @@ import {
   TX_ID_PLACEHOLDER,
 } from "../constants/index.js";
 
-import { BTCTimeLock } from "../schemas/generated/rgbpp.js";
-import { RgbppUdtToken, RgbppUnlock, UtxoSeal } from "../types/rgbpp/rgbpp.js";
+import {
+  BtcTimeLock,
+  RgbppUdtToken,
+  RgbppUnlock,
+  UtxoSeal,
+} from "../types/rgbpp/rgbpp.js";
 import { RgbppUdtClient } from "../udt/index.js";
 import {
   prependHexPrefix,
@@ -28,8 +30,6 @@ import {
   utf8ToHex,
 } from "./encoder.js";
 import { isSameScriptTemplate, isUsingOneOfScripts } from "./script.js";
-
-import { Script } from "../schemas/generated/blockchain.js";
 
 export const encodeRgbppUdtToken = (token: RgbppUdtToken): string => {
   const decimal = u8ToHex(token.decimal);
@@ -76,30 +76,14 @@ export const buildBtcTimeLockArgs = (
   btcTxId: string,
   confirmations = DEFAULT_CONFIRMATIONS,
 ): ccc.Hex => {
-  const btcTxid = blockchain.Byte32.pack(
-    reverseHexByteOrder(prependHexPrefix(btcTxId)),
-  );
-  const lockScript = Script.unpack(receiverLock.toBytes());
-
   return ccc.hexFrom(
-    BTCTimeLock.pack({
-      lockScript,
+    BtcTimeLock.encode({
+      lockScript: receiverLock,
       after: confirmations,
-      btcTxid,
+      btcTxid: reverseHexByteOrder(prependHexPrefix(btcTxId)),
     }),
   );
 };
-
-// export const buildUniqueTypeArgs = (
-//   firstInput: ccc.CellInput,
-//   firstOutputIndex: number,
-// ) => {
-//   const input = ccc.bytesFrom(firstInput.toBytes());
-//   const s = blake2b(32, null, null, PERSONAL);
-//   s.update(input);
-//   s.update(ccc.bytesFrom(prependHexPrefix(u64ToLe(BigInt(firstOutputIndex)))));
-//   return prependHexPrefix(`${s.digest("hex").slice(0, 40)}`);
-// };
 
 export const buildUniqueTypeArgs = (
   firstInput: ccc.CellInput,
