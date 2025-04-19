@@ -104,3 +104,79 @@ export class RgbppUnlock extends mol.Entity.Base<
     );
   }
 }
+
+// table BTCTimeLock {
+//   lock_script: Script,
+//   after: Uint32,
+//   btc_txid: Byte32,
+// }
+
+/**
+ * @public
+ */
+export type BtcTimeLockLike = {
+  lockScript: ccc.Script;
+  after: ccc.NumLike;
+  btcTxid: ccc.HexLike;
+};
+/**
+ * @public
+ */
+@mol.codec(
+  mol.table({
+    lockScript: ccc.Script,
+    after: mol.Uint32,
+    btcTxid: mol.Byte32,
+  }),
+)
+export class BtcTimeLock extends mol.Entity.Base<
+  BtcTimeLockLike,
+  BtcTimeLock
+>() {
+  constructor(
+    public lockScript: ccc.Script,
+    public after: ccc.Num,
+    public btcTxid: string,
+  ) {
+    super();
+  }
+
+  static from(btl: BtcTimeLockLike): BtcTimeLock {
+    return new BtcTimeLock(
+      ccc.Script.from(btl.lockScript),
+      ccc.numFrom(btl.after),
+      ccc.hexFrom(btl.btcTxid),
+    );
+  }
+}
+
+// table BTCTimeUnlock {
+//   btc_tx_proof: Bytes,
+// }
+
+/**
+ * @public
+ */
+export type BtcTimeUnlockLike = {
+  btcTxProof: ccc.HexLike;
+};
+/**
+ * @public
+ */
+@mol.codec(
+  mol.table({
+    btcTxProof: mol.Bytes,
+  }),
+)
+export class BtcTimeUnlock extends mol.Entity.Base<
+  BtcTimeUnlockLike,
+  BtcTimeUnlock
+>() {
+  constructor(public btcTxProof: ccc.Hex) {
+    super();
+  }
+
+  static from(btul: BtcTimeUnlockLike): BtcTimeUnlock {
+    return new BtcTimeUnlock(ccc.hexFrom(btul.btcTxProof));
+  }
+}
