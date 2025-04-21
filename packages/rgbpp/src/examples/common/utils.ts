@@ -25,7 +25,6 @@ export async function prepareRgbppCells(
   console.log("RGB++ cell not found, creating a new one");
   const tx = ccc.Transaction.default();
 
-  // ? The capacity of the prepared cell appears to be irrelevant.
   // If additional capacity is required when used as an input in a transaction, it can always be supplemented in `completeInputsByCapacity`.
   tx.addOutput({
     lock: rgbppLockScript,

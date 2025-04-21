@@ -45,7 +45,7 @@ import {
 import {
   getAddressType,
   isOpReturnScriptPubkey,
-  toNetwork,
+  toBtcNetwork,
   utxoToInputData,
 } from "../utils/utils.js";
 
@@ -172,7 +172,7 @@ export class RgbppBtcWallet extends BtcAssetsApiBase {
       feeRate,
     );
 
-    const psbt = new Psbt({ network: toNetwork(this.network) });
+    const psbt = new Psbt({ network: toBtcNetwork(this.network) });
     balancedInputs.forEach((input) => {
       psbt.data.addInput(input);
     });
@@ -326,7 +326,7 @@ export class RgbppBtcWallet extends BtcAssetsApiBase {
     feeRate?: number,
   ) {
     // Create a temporary PSBT to calculate the fee
-    const psbt = new Psbt({ network: toNetwork(this.network) });
+    const psbt = new Psbt({ network: toBtcNetwork(this.network) });
     inputs.forEach((input) => psbt.addInput(input));
     outputs.forEach((output) => psbt.addOutput(output));
 
@@ -423,7 +423,7 @@ export class RgbppBtcWallet extends BtcAssetsApiBase {
       outputs,
       feeRate,
     );
-    const psbt = new Psbt({ network: toNetwork(this.network) });
+    const psbt = new Psbt({ network: toBtcNetwork(this.network) });
     balancedInputs.forEach((input) => {
       psbt.data.addInput(input);
     });
