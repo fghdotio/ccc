@@ -5,12 +5,7 @@ import dotenv from "dotenv";
 import { dirname } from "path";
 import { fileURLToPath } from "url";
 
-import {
-  BtcAccount,
-  createBtcAccount,
-  parseAddressType,
-  RgbppBtcWallet,
-} from "../../bitcoin/index.js";
+import { parseAddressType, RgbppBtcWallet } from "../../bitcoin/index.js";
 import { ScriptInfo } from "../../types/rgbpp/index.js";
 
 import { CkbRgbppUnlockSinger } from "../../signer/index.js";
@@ -39,7 +34,6 @@ export const ckbSigner = new ccc.SignerCkbPrivateKey(ckbClient, ckbPrivateKey);
 
 export function initializeRgbppEnv(scriptInfos?: ScriptInfo[]): {
   networkConfig: NetworkConfig;
-  utxoBasedAccount: BtcAccount;
   utxoBasedAccountAddress: string;
   rgbppUdtClient: RgbppUdtClient;
   rgbppBtcWallet: RgbppBtcWallet;
@@ -59,18 +53,12 @@ export function initializeRgbppEnv(scriptInfos?: ScriptInfo[]): {
     scripts,
   );
 
-  const utxoBasedAccount = createBtcAccount(
-    utxoBasedChainPrivateKey,
-    addressType,
-    networkConfig.name,
-  );
-
   const rgbppUdtClient = new RgbppUdtClient(networkConfig, ckbClient);
 
   const rgbppBtcWallet = new RgbppBtcWallet(
     utxoBasedChainPrivateKey,
     addressType,
-    networkConfig.name,
+    networkConfig,
     {
       url: btcAssetsApiUrl,
       token: btcAssetsApiToken,
@@ -80,13 +68,12 @@ export function initializeRgbppEnv(scriptInfos?: ScriptInfo[]): {
 
   return {
     networkConfig,
-    utxoBasedAccount,
-    utxoBasedAccountAddress: utxoBasedAccount.from,
+    utxoBasedAccountAddress: rgbppBtcWallet.getAddress(),
     rgbppUdtClient,
     rgbppBtcWallet,
     ckbRgbppUnlockSinger: new CkbRgbppUnlockSinger(
       ckbClient,
-      utxoBasedAccount.from,
+      rgbppBtcWallet.getAddress(),
       rgbppBtcWallet,
       rgbppBtcWallet,
       rgbppUdtClient.getRgbppScriptInfos(),

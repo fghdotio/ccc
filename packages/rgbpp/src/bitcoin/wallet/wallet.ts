@@ -41,6 +41,7 @@ import {
   TxInputData,
   TxOutput,
   Utxo,
+  UtxoSealOptions,
 } from "../types/tx.js";
 import {
   getAddressType,
@@ -49,27 +50,30 @@ import {
   utxoToInputData,
 } from "../utils/utils.js";
 
+import { NetworkConfig } from "../../types/network.js";
 import { RgbppApiSpvProof } from "../../types/spv.js";
 
-const DEFAULT_FEE_RATE = 1;
-// TODO: use dust limit from network config
-const DEFAULT_DUST_LIMIT = 546;
 const DEFAULT_VIRTUAL_SIZE_BUFFER = 20;
 
 export class RgbppBtcWallet extends BtcAssetsApiBase {
   private account: BtcAccount;
-  private network: string;
 
   constructor(
     privateKey: string,
     addressType: AddressType,
-    networkType: string,
+    private networkConfig: NetworkConfig,
     btcAssetApiConfig: BtcAssetApiConfig,
   ) {
     super(btcAssetApiConfig);
-    this.account = createBtcAccount(privateKey, addressType, networkType);
+    this.account = createBtcAccount(
+      privateKey,
+      addressType,
+      networkConfig.name,
+    );
+  }
 
-    this.network = networkType;
+  getAddress() {
+    return this.account.from;
   }
 
   async buildPsbt(
@@ -163,6 +167,7 @@ export class RgbppBtcWallet extends BtcAssetsApiBase {
       commitmentTx,
       btcChangeAddress,
       receiverBtcAddresses,
+      this.networkConfig.btcDustLimit,
       rgbppUdtClient,
     );
 
@@ -172,7 +177,7 @@ export class RgbppBtcWallet extends BtcAssetsApiBase {
       feeRate,
     );
 
-    const psbt = new Psbt({ network: toBtcNetwork(this.network) });
+    const psbt = new Psbt({ network: toBtcNetwork(this.networkConfig.name) });
     balancedInputs.forEach((input) => {
       psbt.data.addInput(input);
     });
@@ -269,7 +274,7 @@ export class RgbppBtcWallet extends BtcAssetsApiBase {
       changeValue = newChangeValue;
     }
 
-    if (changeValue >= DEFAULT_DUST_LIMIT) {
+    if (changeValue >= this.networkConfig.btcDustLimit) {
       outputs.push({
         address: this.account.from,
         value: changeValue,
@@ -326,7 +331,7 @@ export class RgbppBtcWallet extends BtcAssetsApiBase {
     feeRate?: number,
   ) {
     // Create a temporary PSBT to calculate the fee
-    const psbt = new Psbt({ network: toBtcNetwork(this.network) });
+    const psbt = new Psbt({ network: toBtcNetwork(this.networkConfig.name) });
     inputs.forEach((input) => psbt.addInput(input));
     outputs.forEach((output) => psbt.addOutput(output));
 
@@ -363,9 +368,9 @@ export class RgbppBtcWallet extends BtcAssetsApiBase {
       try {
         feeRate = (await this.getRecommendedFee()).fastestFee;
       } catch (error) {
-        feeRate = DEFAULT_FEE_RATE;
+        feeRate = this.networkConfig.btcFeeRate;
         console.warn(
-          `Failed to get recommended fee rate: ${String(error)}, using default fee rate ${DEFAULT_FEE_RATE}`,
+          `Failed to get recommended fee rate: ${String(error)}, using default fee rate ${this.networkConfig.btcFeeRate}`,
         );
       }
     }
@@ -393,9 +398,9 @@ export class RgbppBtcWallet extends BtcAssetsApiBase {
     );
   }
 
-  // TODO: target value as a parameter
-  async prepareUtxoSeal(feeRate?: number): Promise<UtxoSeal> {
-    const targetValue = DEFAULT_DUST_LIMIT;
+  async prepareUtxoSeal(options?: UtxoSealOptions): Promise<UtxoSeal> {
+    const targetValue = options?.targetValue ?? this.networkConfig.btcDustLimit;
+    const feeRate = options?.feeRate ?? this.networkConfig.btcFeeRate;
     const outputs = [
       {
         address: this.account.from,
@@ -423,7 +428,7 @@ export class RgbppBtcWallet extends BtcAssetsApiBase {
       outputs,
       feeRate,
     );
-    const psbt = new Psbt({ network: toBtcNetwork(this.network) });
+    const psbt = new Psbt({ network: toBtcNetwork(this.networkConfig.name) });
     balancedInputs.forEach((input) => {
       psbt.data.addInput(input);
     });

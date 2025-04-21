@@ -16,7 +16,7 @@ async function createSporeCluster(utxoSeal?: UtxoSeal) {
   } = initializeRgbppEnv();
 
   if (!utxoSeal) {
-    utxoSeal = await rgbppBtcWallet.prepareUtxoSeal(28);
+    utxoSeal = await rgbppBtcWallet.prepareUtxoSeal({ feeRate: 28 });
   }
 
   const rgbppCells = await prepareRgbppCells(utxoSeal, rgbppUdtClient);
@@ -70,8 +70,8 @@ async function createSporeCluster(utxoSeal?: UtxoSeal) {
 const logger = new RgbppTxLogger({ opType: "cluster-creation" });
 
 createSporeCluster({
-  txId: "dd8b035ca0a3f453798670b9b757b6af22b790fc63fedc2adcddd654dfa52117",
-  index: 2,
+  txId: "a8598f3b9c6b8a15529ecfd2d6c7c2897b4d4efcf88414270bce0e16b961a404",
+  index: 3,
 })
   .then(() => {
     logger.saveOnSuccess();
