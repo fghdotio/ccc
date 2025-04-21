@@ -9,7 +9,11 @@ import {
   NetworkConfigOverrides,
   PredefinedNetwork,
 } from "../types/network.js";
-import { CellDepSet, ScriptSet } from "../types/script.js";
+import {
+  CellDepSet,
+  PredefinedScriptName,
+  ScriptSet,
+} from "../types/script.js";
 
 export function buildNetworkConfig(
   network: Network,
@@ -34,9 +38,41 @@ export function buildNetworkConfig(
         cellDeps: predefinedCellDeps[PredefinedNetwork.BitcoinSignet],
       };
       break;
-    // TODO: if not in PredefinedNetwork, predefinedScripts and predefinedCellDeps must be provided
+    case PredefinedNetwork.BitcoinMainnet:
+      config = {
+        name: PredefinedNetwork.BitcoinMainnet,
+        isMainnet: true,
+        scripts: predefinedScripts[PredefinedNetwork.BitcoinMainnet],
+        cellDeps: predefinedCellDeps[PredefinedNetwork.BitcoinMainnet],
+      };
+      break;
     default:
-      throw new Error(`Unsupported predefined network: ${network}`);
+      // if not in PredefinedNetwork, predefinedScripts and predefinedCellDeps must be provided
+      if (!overrides?.scripts || !overrides?.cellDeps) {
+        throw new Error(
+          `For custom network ${network}, predefinedScripts and predefinedCellDeps must be provided`,
+        );
+      }
+      const { scripts, cellDeps } = overrides;
+
+      // Ensure all required scripts and cellDeps are provided
+      const requiredScripts = Object.values(PredefinedScriptName);
+      const missingScripts = requiredScripts.filter((name) => !scripts[name]);
+      const missingCellDeps = requiredScripts.filter((name) => !cellDeps[name]);
+
+      if (missingScripts.length > 0 || missingCellDeps.length > 0) {
+        throw new Error(
+          `For custom network ${network}, missing required scripts: ${missingScripts.join(", ")} or cellDeps: ${missingCellDeps.join(", ")}`,
+        );
+      }
+
+      config = {
+        name: network,
+        isMainnet: false,
+        scripts: scripts as ScriptSet,
+        cellDeps: cellDeps as CellDepSet,
+      };
+      break;
   }
 
   return overrides ? mergeConfigs(config, overrides) : config;
@@ -63,8 +99,5 @@ function mergeConfigs(
 }
 
 export function isMainnet(network: Network): boolean {
-  return (
-    network === PredefinedNetwork.BitcoinMainnet ||
-    network === PredefinedNetwork.DogecoinMainnet
-  );
+  return network === PredefinedNetwork.BitcoinMainnet;
 }
