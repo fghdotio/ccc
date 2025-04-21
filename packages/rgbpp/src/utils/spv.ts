@@ -22,7 +22,10 @@ export async function pollForSpvProof(
             resolve(proof);
           }
         } catch (e) {
-          console.error(`[SPV] Error polling for BTC tx ${btcTxId}:`, e);
+          console.info(
+            `[SPV] Error polling for BTC tx ${btcTxId}:`,
+            e instanceof Error ? e.message : String(e),
+          );
           // Continue polling on error
         }
       },
