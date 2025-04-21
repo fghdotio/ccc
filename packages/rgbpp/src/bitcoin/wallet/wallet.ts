@@ -260,18 +260,17 @@ export class RgbppBtcWallet extends BtcAssetsApiBase {
     balancedOutputs: TxOutput[];
   }> {
     let ins = inputs.slice();
-    let outs = outputs.slice();
 
     let fulfilled = false;
     let changeValue = 0;
-    const outsValue = outs.reduce((acc, output) => acc + output.value, 0);
+    const outsValue = outputs.reduce((acc, output) => acc + output.value, 0);
 
     while (!fulfilled) {
       const insValue = ins.reduce(
         (acc, input) => acc + input.witnessUtxo.value,
         0,
       );
-      const requiredFee = await this.estimateFee(ins, outs, feeRate);
+      const requiredFee = await this.estimateFee(ins, outputs, feeRate);
 
       if (insValue > outsValue + requiredFee) {
         changeValue = insValue - outsValue - requiredFee;
@@ -296,7 +295,7 @@ export class RgbppBtcWallet extends BtcAssetsApiBase {
     }
 
     return {
-      balancedInputs: inputs,
+      balancedInputs: ins,
       balancedOutputs: outputs,
     };
   }
