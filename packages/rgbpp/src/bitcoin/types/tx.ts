@@ -148,4 +148,5 @@ export interface TxDataOutput extends TxBaseOutput {
 export interface UtxoSealOptions {
   targetValue?: number;
   feeRate?: number;
+  btcUtxoParams?: BtcApiUtxoParams;
 }
