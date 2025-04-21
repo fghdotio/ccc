@@ -2,12 +2,17 @@ import ecc from "@bitcoinerlab/secp256k1";
 import * as bitcoin from "bitcoinjs-lib";
 import { ECPairFactory } from "ecpair";
 
-bitcoin.initEccLib(ecc);
-const ECPair = ECPairFactory(ecc);
-
 import { trimHexPrefix } from "../../utils/index.js";
 import { AddressType } from "../types/tx.js";
-import { toNetwork, toXOnly } from "../utils/utils.js";
+import {
+  isSupportedAddressType,
+  SUPPORTED_ADDRESS_TYPES,
+  toBtcNetwork,
+  toXOnly,
+} from "../utils/utils.js";
+
+bitcoin.initEccLib(ecc);
+const ECPair = ECPairFactory(ecc);
 
 export interface BtcAccount {
   from: string;
@@ -23,8 +28,15 @@ export function createBtcAccount(
   addressType: AddressType,
   networkType: string,
 ): BtcAccount {
-  const network = toNetwork(networkType);
+  if (!isSupportedAddressType(addressType)) {
+    throw new Error(
+      `Unsupported address type, only support ${SUPPORTED_ADDRESS_TYPES.join(
+        ", ",
+      )}`,
+    );
+  }
 
+  const network = toBtcNetwork(networkType);
   const key = Buffer.from(trimHexPrefix(privateKey), "hex");
   const keyPair = ECPair.fromPrivateKey(key, { network });
 
@@ -40,16 +52,29 @@ export function createBtcAccount(
       addressType,
       networkType,
     };
-  } else {
-    throw new Error("Unsupported address type, only support P2WPKH and P2TR");
+  } else if (addressType === AddressType.P2TR) {
+    const p2tr = bitcoin.payments.p2tr({
+      internalPubkey: toXOnly(keyPair.publicKey),
+      network,
+    });
+    return {
+      from: p2tr.address!,
+      fromPubkey: keyPair.publicKey.toString("hex"),
+      payment: p2tr,
+      keyPair,
+      addressType,
+      networkType,
+    };
   }
+
+  throw new Error("Unsupported address type, only support P2WPKH and P2TR");
 }
 
 export function addressToScriptPublicKeyHex(
   address: string,
   networkType: string,
 ): string {
-  const network = toNetwork(networkType);
+  const network = toBtcNetwork(networkType);
   const script = bitcoin.address.toOutputScript(address, network);
   if (!script) {
     throw new Error("Invalid address!");
