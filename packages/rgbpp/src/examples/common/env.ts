@@ -6,9 +6,9 @@ import { dirname } from "path";
 import { fileURLToPath } from "url";
 
 import {
-  AddressType,
   BtcAccount,
   createBtcAccount,
+  parseAddressType,
   RgbppBtcWallet,
 } from "../../bitcoin/index.js";
 import { ScriptInfo } from "../../types/rgbpp/index.js";
@@ -32,8 +32,7 @@ export const ckbClient = isMainnet(utxoBasedChainName)
   ? new ccc.ClientPublicMainnet()
   : new ccc.ClientPublicTestnet();
 
-const addressType =
-  utxoBasedChainAddressType === "P2TR" ? AddressType.P2TR : AddressType.P2WPKH;
+const addressType = parseAddressType(utxoBasedChainAddressType);
 
 export const ckbSigner = new ccc.SignerCkbPrivateKey(ckbClient, ckbPrivateKey);
 // export const ckbAddress = await ckbSigner.getRecommendedAddress();

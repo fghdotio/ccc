@@ -35,6 +35,26 @@ export function getAddressType(address: string): AddressType {
   return decodeAddress(address).addressType;
 }
 
+export function parseAddressType(
+  addressType: AddressType | string,
+): AddressType {
+  if (typeof addressType === "string") {
+    const type = AddressType[addressType as keyof typeof AddressType];
+    if (!type) {
+      throw new Error(`Invalid address type: ${addressType}`);
+    }
+    return type;
+  }
+
+  return addressType;
+}
+
+export const SUPPORTED_ADDRESS_TYPES = [AddressType.P2WPKH, AddressType.P2TR];
+
+export function isSupportedAddressType(at: AddressType): boolean {
+  return SUPPORTED_ADDRESS_TYPES.includes(at);
+}
+
 export enum NetworkType {
   MAINNET,
   TESTNET,
@@ -142,12 +162,10 @@ function getAddressTypeDust(addressType: AddressType) {
   }
 }
 
-export function toNetwork(network: string): bitcoin.Network {
-  if (network === PredefinedNetwork.BitcoinMainnet) {
-    return bitcoin.networks.bitcoin;
-  } else {
-    return bitcoin.networks.testnet;
-  }
+export function toBtcNetwork(network: string): bitcoin.Network {
+  return network === PredefinedNetwork.BitcoinMainnet
+    ? bitcoin.networks.bitcoin
+    : bitcoin.networks.testnet;
 }
 
 /**
@@ -212,6 +230,14 @@ export function isOpReturnScriptPubkey(script: Buffer): boolean {
 }
 
 export function utxoToInputData(utxo: Utxo): TxInputData {
+  if (!isSupportedAddressType(utxo.addressType)) {
+    throw new Error(
+      `Unsupported address type, only support ${SUPPORTED_ADDRESS_TYPES.join(
+        ", ",
+      )}`,
+    );
+  }
+
   if (utxo.addressType === AddressType.P2WPKH) {
     const data = {
       hash: utxo.txid,
@@ -221,7 +247,6 @@ export function utxoToInputData(utxo: Utxo): TxInputData {
         script: Buffer.from(trimHexPrefix(utxo.scriptPk), "hex"),
       },
     };
-
     return data;
   }
 
