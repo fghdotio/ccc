@@ -16,7 +16,7 @@ async function ckbSporeToBtc({
   const { rgbppBtcWallet, rgbppUdtClient } = initializeRgbppEnv();
 
   if (!utxoSeal) {
-    utxoSeal = await rgbppBtcWallet.prepareUtxoSeal(28);
+    utxoSeal = await rgbppBtcWallet.prepareUtxoSeal({ feeRate: 28 });
   }
 
   const { tx } = await spore.transferSpore({

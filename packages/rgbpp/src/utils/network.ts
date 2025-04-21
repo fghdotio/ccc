@@ -15,6 +15,11 @@ import {
   ScriptSet,
 } from "../types/script.js";
 
+import {
+  DEFAULT_DUST_LIMIT,
+  DEFAULT_FEE_RATE,
+} from "../configs/scripts/index.js";
+
 export function buildNetworkConfig(
   network: Network,
   overrides?: NetworkConfigOverrides,
@@ -26,6 +31,8 @@ export function buildNetworkConfig(
       config = {
         name: PredefinedNetwork.BitcoinTestnet3,
         isMainnet: false,
+        btcDustLimit: overrides?.btcDustLimit || DEFAULT_DUST_LIMIT,
+        btcFeeRate: overrides?.btcFeeRate || DEFAULT_FEE_RATE,
         scripts: predefinedScripts[PredefinedNetwork.BitcoinTestnet3],
         cellDeps: predefinedCellDeps[PredefinedNetwork.BitcoinTestnet3],
       };
@@ -34,6 +41,8 @@ export function buildNetworkConfig(
       config = {
         name: PredefinedNetwork.BitcoinSignet,
         isMainnet: false,
+        btcDustLimit: overrides?.btcDustLimit || DEFAULT_DUST_LIMIT,
+        btcFeeRate: overrides?.btcFeeRate || DEFAULT_FEE_RATE,
         scripts: predefinedScripts[PredefinedNetwork.BitcoinSignet],
         cellDeps: predefinedCellDeps[PredefinedNetwork.BitcoinSignet],
       };
@@ -42,6 +51,8 @@ export function buildNetworkConfig(
       config = {
         name: PredefinedNetwork.BitcoinMainnet,
         isMainnet: true,
+        btcDustLimit: overrides?.btcDustLimit || DEFAULT_DUST_LIMIT,
+        btcFeeRate: overrides?.btcFeeRate || DEFAULT_FEE_RATE,
         scripts: predefinedScripts[PredefinedNetwork.BitcoinMainnet],
         cellDeps: predefinedCellDeps[PredefinedNetwork.BitcoinMainnet],
       };
@@ -69,6 +80,8 @@ export function buildNetworkConfig(
       config = {
         name: network,
         isMainnet: false,
+        btcDustLimit: overrides?.btcDustLimit || DEFAULT_DUST_LIMIT,
+        btcFeeRate: overrides?.btcFeeRate || DEFAULT_FEE_RATE,
         scripts: scripts as ScriptSet,
         cellDeps: cellDeps as CellDepSet,
       };
@@ -85,6 +98,8 @@ function mergeConfigs(
   return {
     name: base.name,
     isMainnet: base.isMainnet,
+    btcDustLimit: overrides?.btcDustLimit || base.btcDustLimit,
+    btcFeeRate: overrides?.btcFeeRate || base.btcFeeRate,
     scripts: Object.assign(
       {},
       base.scripts,

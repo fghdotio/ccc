@@ -144,3 +144,8 @@ export type InitOutput = TxAddressOutput | TxDataOutput | TxScriptOutput;
 export interface TxDataOutput extends TxBaseOutput {
   data: Buffer | string;
 }
+
+export interface UtxoSealOptions {
+  targetValue?: number;
+  feeRate?: number;
+}

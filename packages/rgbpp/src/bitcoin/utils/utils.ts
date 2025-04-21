@@ -64,7 +64,6 @@ export enum NetworkType {
 export function decodeAddress(address: string): {
   networkType: NetworkType;
   addressType: AddressType;
-  dust: number;
 } {
   const mainnet = bitcoin.networks.bitcoin;
   const testnet = bitcoin.networks.testnet;
@@ -102,7 +101,6 @@ export function decodeAddress(address: string): {
         return {
           networkType,
           addressType,
-          dust: getAddressTypeDust(addressType),
         };
       }
     } catch (e) {
@@ -137,7 +135,6 @@ export function decodeAddress(address: string): {
         return {
           networkType,
           addressType,
-          dust: getAddressTypeDust(addressType),
         };
       }
     } catch (e) {
@@ -148,18 +145,7 @@ export function decodeAddress(address: string): {
   return {
     addressType: AddressType.UNKNOWN,
     networkType: NetworkType.MAINNET,
-    dust: 546,
   };
-}
-
-function getAddressTypeDust(addressType: AddressType) {
-  if (addressType === AddressType.P2WPKH) {
-    return 294;
-  } else if (addressType === AddressType.P2TR) {
-    return 330;
-  } else {
-    return 546;
-  }
 }
 
 export function toBtcNetwork(network: string): bitcoin.Network {

@@ -1,8 +1,6 @@
-import { ccc } from "@ckb-ccc/shell";
-
 import { ScriptInfo, UtxoSeal } from "../../types/rgbpp/index.js";
 
-import { issuanceAmount, udtToken } from "../common/assets.js";
+import { issuanceAmount, testnetSudtInfo, udtToken } from "../common/assets.js";
 import { ckbClient, ckbSigner, initializeRgbppEnv } from "../common/env.js";
 import { RgbppTxLogger } from "../common/logger.js";
 import { prepareRgbppCells } from "../common/utils.js";
@@ -22,7 +20,7 @@ async function issueUdt({
   } = initializeRgbppEnv();
 
   if (!utxoSeal) {
-    utxoSeal = await rgbppBtcWallet.prepareUtxoSeal(10);
+    utxoSeal = await rgbppBtcWallet.prepareUtxoSeal({ feeRate: 10 });
   }
 
   const rgbppIssuanceCells = await prepareRgbppCells(utxoSeal, rgbppUdtClient);
@@ -71,21 +69,21 @@ async function issueUdt({
 const logger = new RgbppTxLogger({ opType: "udt-issuance" });
 
 issueUdt({
-  udtScriptInfo: {
-    name: ccc.KnownScript.XUdt,
-    script: await ccc.Script.fromKnownScript(
-      ckbClient,
-      ccc.KnownScript.XUdt,
-      "",
-    ),
-    cellDep: (await ckbClient.getKnownScript(ccc.KnownScript.XUdt)).cellDeps[0]
-      .cellDep,
-  },
+  // udtScriptInfo: {
+  //   name: ccc.KnownScript.XUdt,
+  //   script: await ccc.Script.fromKnownScript(
+  //     ckbClient,
+  //     ccc.KnownScript.XUdt,
+  //     "",
+  //   ),
+  //   cellDep: (await ckbClient.getKnownScript(ccc.KnownScript.XUdt)).cellDeps[0]
+  //     .cellDep,
+  // },
 
-  // udtScriptInfo: testnetSudtInfo,
+  udtScriptInfo: testnetSudtInfo,
 
   utxoSeal: {
-    txId: "8aa4aa52f6cecb7dd42316d26076a60f3384ec3f45d2be3d9b283eee7b360ae8",
+    txId: "81628f4a0a816e87559d83017fdabc4c3c0407e573ee51fe57707c423bf49d8d",
     index: 2,
   },
 })
