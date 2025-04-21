@@ -6,8 +6,8 @@ export enum PredefinedNetwork {
 
   BitcoinMainnet = "BitcoinMainnet",
 
-  DogecoinMainnet = "DogecoinMainnet",
-  DogecoinTestnet = "DogecoinTestnet",
+  // DogecoinMainnet = "DogecoinMainnet",
+  // DogecoinTestnet = "DogecoinTestnet",
 }
 
 export interface NetworkConfig {
