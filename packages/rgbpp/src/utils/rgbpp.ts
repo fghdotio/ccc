@@ -177,6 +177,7 @@ export const buildBtcRgbppOutputs = (
   ckbPartialTx: ccc.Transaction,
   btcChangeAddress: string,
   receiverBtcAddresses: string[],
+  btcDustLimit: number,
   rgbppUdtClient: RgbppUdtClient,
 ): TxOutput[] => {
   const commitment = calculateCommitment(ckbPartialTx);
@@ -206,8 +207,8 @@ export const buildBtcRgbppOutputs = (
         fixed: true,
         // Out-of-range index indicates this is a RGB++ change output returning to the BTC address
         address: receiverBtcAddresses[index] ?? btcChangeAddress,
-        value: 546,
-        minUtxoSatoshi: 546,
+        value: btcDustLimit,
+        minUtxoSatoshi: btcDustLimit,
       });
     }
   });

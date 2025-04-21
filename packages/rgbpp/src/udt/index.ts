@@ -22,7 +22,7 @@ export class RgbppUdtClient {
   private scriptManager: ScriptManager;
 
   constructor(
-    private networkConfig: NetworkConfig,
+    networkConfig: NetworkConfig,
     private ckbClient: ccc.Client,
   ) {
     this.scriptManager = new ScriptManager(
