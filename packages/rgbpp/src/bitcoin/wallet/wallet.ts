@@ -259,25 +259,33 @@ export class RgbppBtcWallet extends BtcAssetsApiBase {
     balancedInputs: TxInputData[];
     balancedOutputs: TxOutput[];
   }> {
-    const requiredFee = await this.estimateFee(inputs, outputs, feeRate);
-    const inputsValue = inputs.reduce(
-      (acc, input) => acc + input.witnessUtxo.value,
-      0,
-    );
-    const outputsValue = outputs.reduce((acc, output) => acc + output.value, 0);
-    let changeValue = inputsValue - outputsValue - requiredFee;
-    if (changeValue < 0) {
-      // TODO: verify if any of the required extra inputs are already present in the inputs array
-      const { inputs: extraInputs, changeValue: newChangeValue } =
-        await this.collectUtxos(
-          -changeValue,
+    let ins = inputs.slice();
+    let outs = outputs.slice();
+
+    let fulfilled = false;
+    let changeValue = 0;
+    const outsValue = outs.reduce((acc, output) => acc + output.value, 0);
+
+    while (!fulfilled) {
+      const insValue = ins.reduce(
+        (acc, input) => acc + input.witnessUtxo.value,
+        0,
+      );
+      const requiredFee = await this.estimateFee(ins, outs, feeRate);
+
+      if (insValue > outsValue + requiredFee) {
+        changeValue = insValue - outsValue - requiredFee;
+        fulfilled = true;
+      } else {
+        const { inputs: extraInputs } = await this.collectUtxos(
+          outsValue + requiredFee - insValue,
           btcUtxoParams ?? {
             only_non_rgbpp_utxos: true,
           },
-          inputs,
+          ins,
         );
-      inputs.push(...extraInputs);
-      changeValue = newChangeValue;
+        ins = [...ins, ...extraInputs];
+      }
     }
 
     if (changeValue >= this.networkConfig.btcDustLimit) {
@@ -352,7 +360,7 @@ export class RgbppBtcWallet extends BtcAssetsApiBase {
     inputs.forEach((input) => psbt.addInput(input));
     outputs.forEach((output) => psbt.addOutput(output));
 
-    // TODO: FIX ME: signTx will fail if inputs value is smaller than outputs value
+    // * signTx will fail if inputs value is smaller than outputs value
     let totalInputValue = inputs.reduce(
       (acc, input) => acc + input.witnessUtxo.value,
       0,
@@ -454,7 +462,7 @@ export class RgbppBtcWallet extends BtcAssetsApiBase {
       psbt.addOutput(output);
     });
 
-    // TODO: Separate construction, signing, and sending
+    // TODO: separate construction, signing, and sending
     const signedTx = await this.signTx(psbt);
     const txId = await this.sendTx(signedTx);
     console.log(`[prepareUtxoSeal] Transaction ${txId} sent`);

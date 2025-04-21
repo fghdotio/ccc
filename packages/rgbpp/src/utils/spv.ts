@@ -11,7 +11,7 @@ export async function pollForSpvProof(
     const polling = setInterval(
       async () => {
         try {
-          console.log(`Waiting for btc tx ${btcTxId} and proof to be ready`);
+          console.log(`[SPV] Polling for BTC tx ${btcTxId}`);
           const proof = await spvProofProvider.getRgbppSpvProof(
             btcTxId,
             confirmations,
@@ -22,8 +22,8 @@ export async function pollForSpvProof(
             resolve(proof);
           }
         } catch (e) {
-          // TODO: fix this
-          console.log(String(e));
+          console.error(`[SPV] Error polling for BTC tx ${btcTxId}:`, e);
+          // Continue polling on error
         }
       },
       intervalInSeconds ?? 10 * 1000,
