@@ -1,6 +1,7 @@
 import { ccc } from "@ckb-ccc/shell";
 
 import { RgbppUdtClient } from "../../udt/index.js";
+import { BtcApiUtxoParams } from "./tx.js";
 
 export interface RgbppBtcTxParams {
   ckbPartialTx: ccc.Transaction;
@@ -9,6 +10,7 @@ export interface RgbppBtcTxParams {
   receiverBtcAddresses: string[];
 
   btcChangeAddress: string;
+  btcUtxoParams?: BtcApiUtxoParams;
 
   feeRate?: number;
 }
