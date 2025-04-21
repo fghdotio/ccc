@@ -274,6 +274,7 @@ export class RgbppBtcWallet extends BtcAssetsApiBase {
           btcUtxoParams ?? {
             only_non_rgbpp_utxos: true,
           },
+          inputs,
         );
       inputs.push(...extraInputs);
       changeValue = newChangeValue;
@@ -295,15 +296,27 @@ export class RgbppBtcWallet extends BtcAssetsApiBase {
   async collectUtxos(
     requiredValue: number,
     params?: BtcApiUtxoParams,
+    knownInputs?: TxInputData[],
   ): Promise<{ inputs: TxInputData[]; changeValue: number }> {
     const utxos = await this.getUtxos(this.account.from, params);
-    if (utxos.length === 0) {
+
+    let filteredUtxos = utxos;
+    if (knownInputs) {
+      filteredUtxos = utxos.filter((utxo) => {
+        return !knownInputs.some(
+          (input) => input.hash === utxo.txid && input.index === utxo.vout,
+        );
+      });
+    }
+
+    if (filteredUtxos.length === 0) {
       throw new Error("Insufficient funds");
     }
+
     const selectedUtxos: BtcApiUtxo[] = [];
     let totalValue = 0;
 
-    for (const utxo of utxos) {
+    for (const utxo of filteredUtxos) {
       selectedUtxos.push(utxo);
       totalValue += utxo.value;
 
