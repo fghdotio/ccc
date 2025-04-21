@@ -86,6 +86,7 @@ export class RgbppBtcWallet extends BtcAssetsApiBase {
       btcChangeAddress,
       receiverBtcAddresses,
       feeRate,
+      btcUtxoParams,
     } = params;
 
     const commitmentTx = ckbPartialTx.clone();
@@ -174,6 +175,7 @@ export class RgbppBtcWallet extends BtcAssetsApiBase {
     const { balancedInputs, balancedOutputs } = await this.balanceInputsOutputs(
       inputs,
       rgbppOutputs,
+      btcUtxoParams,
       feeRate,
     );
 
@@ -251,6 +253,7 @@ export class RgbppBtcWallet extends BtcAssetsApiBase {
   async balanceInputsOutputs(
     inputs: TxInputData[],
     outputs: TxOutput[],
+    btcUtxoParams?: BtcApiUtxoParams,
     feeRate?: number,
   ): Promise<{
     balancedInputs: TxInputData[];
@@ -266,10 +269,12 @@ export class RgbppBtcWallet extends BtcAssetsApiBase {
     if (changeValue < 0) {
       // TODO: verify if any of the required extra inputs are already present in the inputs array
       const { inputs: extraInputs, changeValue: newChangeValue } =
-        await this.collectUtxos(-changeValue, {
-          only_non_rgbpp_utxos: false,
-          min_satoshi: 1000,
-        });
+        await this.collectUtxos(
+          -changeValue,
+          btcUtxoParams ?? {
+            only_non_rgbpp_utxos: true,
+          },
+        );
       inputs.push(...extraInputs);
       changeValue = newChangeValue;
     }
@@ -291,7 +296,6 @@ export class RgbppBtcWallet extends BtcAssetsApiBase {
     requiredValue: number,
     params?: BtcApiUtxoParams,
   ): Promise<{ inputs: TxInputData[]; changeValue: number }> {
-    // TODO: more pages
     const utxos = await this.getUtxos(this.account.from, params);
     if (utxos.length === 0) {
       throw new Error("Insufficient funds");
@@ -401,6 +405,10 @@ export class RgbppBtcWallet extends BtcAssetsApiBase {
   async prepareUtxoSeal(options?: UtxoSealOptions): Promise<UtxoSeal> {
     const targetValue = options?.targetValue ?? this.networkConfig.btcDustLimit;
     const feeRate = options?.feeRate ?? this.networkConfig.btcFeeRate;
+    const btcUtxoParams = options?.btcUtxoParams ?? {
+      only_non_rgbpp_utxos: true,
+    };
+
     const outputs = [
       {
         address: this.account.from,
@@ -408,11 +416,7 @@ export class RgbppBtcWallet extends BtcAssetsApiBase {
       },
     ];
 
-    // TODO: only_non_rgbpp_utxos seems not working
-    const utxos = await this.getUtxos(this.account.from, {
-      only_non_rgbpp_utxos: true,
-      min_satoshi: 1000,
-    });
+    const utxos = await this.getUtxos(this.account.from, btcUtxoParams);
     if (utxos.length === 0) {
       throw new Error("Insufficient funds");
     }
@@ -426,6 +430,7 @@ export class RgbppBtcWallet extends BtcAssetsApiBase {
     const { balancedInputs, balancedOutputs } = await this.balanceInputsOutputs(
       inputs,
       outputs,
+      btcUtxoParams,
       feeRate,
     );
     const psbt = new Psbt({ network: toBtcNetwork(this.networkConfig.name) });
@@ -436,7 +441,7 @@ export class RgbppBtcWallet extends BtcAssetsApiBase {
       psbt.addOutput(output);
     });
 
-    // TODO: 构建、签名、发送分离
+    // TODO: Separate construction, signing, and sending
     const signedTx = await this.signTx(psbt);
     const txId = await this.sendTx(signedTx);
     console.log(`[prepareUtxoSeal] Transaction ${txId} sent`);
