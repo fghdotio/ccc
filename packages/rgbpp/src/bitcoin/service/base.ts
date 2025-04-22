@@ -1,6 +1,6 @@
 import lodash from "lodash";
-import { BtcAssetsApiError, ErrorCodes } from "../error.js";
 import { BtcAssetApiConfig } from "../types/btc-assets-api.js";
+import { BtcAssetsApiError, ErrorCodes } from "../types/error.js";
 import {
   BaseApiRequestOptions,
   BaseApis,
@@ -8,7 +8,7 @@ import {
   BtcAssetsApiToken,
   Json,
 } from "../types/index.js";
-import { isDomain } from "../utils/utils.js";
+import { isDomain } from "../utils/index.js";
 
 const { pickBy } = lodash;
 

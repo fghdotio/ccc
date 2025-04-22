@@ -83,7 +83,7 @@ issueUdt({
   udtScriptInfo: testnetSudtInfo,
 
   utxoSeal: {
-    txId: "81628f4a0a816e87559d83017fdabc4c3c0407e573ee51fe57707c423bf49d8d",
+    txId: "f4714d1c4a6d2528a3949db56977f569b62b9735dc008a65d922940ab3580bcd",
     index: 2,
   },
 })

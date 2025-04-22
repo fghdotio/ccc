@@ -9,7 +9,7 @@ import {
   SUPPORTED_ADDRESS_TYPES,
   toBtcNetwork,
   toXOnly,
-} from "../utils/utils.js";
+} from "../utils/index.js";
 
 bitcoin.initEccLib(ecc);
 const ECPair = ECPairFactory(ecc);
