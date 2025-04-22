@@ -5,8 +5,8 @@ import {
   UNIQUE_TYPE_OUTPUT_INDEX,
 } from "../constants/index.js";
 
+import { ScriptManager } from "../configs/index.js";
 import { deadLock } from "../configs/scripts/index.js";
-import { ScriptManager } from "../rgbpp/script-manager.js";
 import { NetworkConfig, UtxoSeal } from "../types/index.js";
 import { RgbppUdtIssuance } from "../types/rgbpp/udt.js";
 import { PredefinedScriptName } from "../types/script.js";

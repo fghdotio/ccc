@@ -54,9 +54,9 @@ async function transferSpore({
 const logger = new RgbppTxLogger({ opType: "spore-transfer" });
 
 transferSpore({
-  btcAddress: "tb1qe8xc5ay5sdh0r58v0xfxrtss47kxveyzncs5ja",
+  btcAddress: "tb1qjkdqj8zk6gl7pwuw2d2jp9e6wgf26arjl8pcys",
   sporeTypeArgs:
-    "0xa46af1dda123cbd503edbcc42dc67fdf6fed533379b73da4a3dc6665a5572f1c",
+    "0xd98234035b2275b9abf1e9d87da53814c5f310aabdf3c6e06084e6e4e8d9d8e2",
 })
   .then(() => {
     logger.saveOnSuccess();

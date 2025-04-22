@@ -48,7 +48,7 @@ import {
   isOpReturnScriptPubkey,
   toBtcNetwork,
   utxoToInputData,
-} from "../utils/utils.js";
+} from "../utils/index.js";
 
 import { NetworkConfig } from "../../types/network.js";
 import { RgbppApiSpvProof } from "../../types/spv.js";
