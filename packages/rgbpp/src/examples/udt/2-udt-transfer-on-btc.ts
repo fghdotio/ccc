@@ -4,6 +4,7 @@ import { RgbppBtcReceiver, ScriptInfo } from "../../types/rgbpp/index.js";
 
 import { ckbClient, ckbSigner, initializeRgbppEnv } from "../common/env.js";
 
+import { testnetSudtInfo } from "../common/assets.js";
 import { RgbppTxLogger } from "../common/logger.js";
 
 async function transferUdt({
@@ -72,24 +73,24 @@ async function transferUdt({
 const logger = new RgbppTxLogger({ opType: "udt-transfer-on-btc" });
 
 transferUdt({
-  udtScriptInfo: {
-    name: ccc.KnownScript.XUdt,
-    script: await ccc.Script.fromKnownScript(
-      ckbClient,
-      ccc.KnownScript.XUdt,
-      "0x29e04d8c0c246cc1b0027d7aa8a31f56f740134a56d056bb5efdbb00d3c78a44",
-    ),
-    cellDep: (await ckbClient.getKnownScript(ccc.KnownScript.XUdt)).cellDeps[0]
-      .cellDep,
-  },
-
   // udtScriptInfo: {
-  //   ...testnetSudtInfo,
-  //   script: await ccc.Script.from({
-  //     ...testnetSudtInfo.script,
-  //     args: "0x07bccc105cdd747019a843d8bd0b5424efc33beb20b4f0db0f925e97f30c465f",
-  //   }),
+  //   name: ccc.KnownScript.XUdt,
+  //   script: await ccc.Script.fromKnownScript(
+  //     ckbClient,
+  //     ccc.KnownScript.XUdt,
+  //     "0x1f460e3c8c280ac828ec58cfe3b4ee55dfa1241420229222f24a330b37d3a15f",
+  //   ),
+  //   cellDep: (await ckbClient.getKnownScript(ccc.KnownScript.XUdt)).cellDeps[0]
+  //     .cellDep,
   // },
+
+  udtScriptInfo: {
+    ...testnetSudtInfo,
+    script: await ccc.Script.from({
+      ...testnetSudtInfo.script,
+      args: "0x8418c9699aa47ef02f45f021a6d1d44e4dfa503cf2fc1b002ff3c39e9f158080",
+    }),
+  },
 
   receivers: [
     {
