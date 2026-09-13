@@ -645,7 +645,13 @@ export abstract class Client {
 
   /**
    * Resolve cell dependency info into concrete CellDep objects.
-   * If a CellDepInfo specifies a type script, the actual deployed cell is located on-chain.
+   *
+   * If a CellDepInfo specifies a type script, the live cell carrying it is located on-chain
+   * and **the outpoint configured on the CellDepInfo is discarded**. A type id survives its
+   * cell being consumed and recreated, so a dep with a type keeps working after the code
+   * cell moves, and a configured outpoint that no longer resolves is harmless: it is never
+   * the one that reaches the transaction. A CellDepInfo with no type is used as written,
+   * which is the case that needs maintaining.
    *
    * @param cellDepsInfoLike - One or more CellDepInfo or arrays of CellDepInfo.
    * @returns Resolved CellDep array ready to be added to a transaction.

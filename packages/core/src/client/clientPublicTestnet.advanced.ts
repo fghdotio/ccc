@@ -1,6 +1,31 @@
 import { ScriptInfoLike } from "./clientTypes.js";
 import { KnownScript } from "./knownScript.js";
 
+/**
+ * The known scripts, with a cell dep outpoint recorded for each.
+ *
+ * **An outpoint here is a starting point, not a promise that the cell is still live.** A
+ * code cell can be consumed and recreated carrying the same code, and when that happens the
+ * outpoint written below stops resolving, while the script it points at has not changed at
+ * all. Several of the entries below are in exactly that state today.
+ *
+ * That is not a defect, because nothing uses these outpoints as written. Any dep that
+ * carries a `type` is resolved against the chain by {@link Client.getCellDeps} before it
+ * reaches a transaction: the type id survives the cell being replaced, so the live cell is
+ * found and the stale outpoint is discarded. Transaction building goes through that path,
+ * including {@link Transaction.addCellDepsOfKnownScripts} and every signer that calls it.
+ *
+ * So the rule for maintaining this file is:
+ *
+ * - a dep **with** a `type` needs no attention when its code cell moves;
+ * - a dep **without** one does, because there is nothing to resolve it by. That is why
+ *   JoyID was split from a dep group into five `code` deps in #279: the group had no type
+ *   id, and the pieces do.
+ *
+ * If you are here because you checked these outpoints against a node and found them spent,
+ * that is expected, and it is not the bug it looks like. See #531.
+ */
+
 export const TESTNET_SCRIPTS: Record<KnownScript, ScriptInfoLike> =
   Object.freeze({
     [KnownScript.NervosDao]: {
