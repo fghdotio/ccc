@@ -9,11 +9,16 @@ import { KnownScript } from "./knownScript.js";
  * outpoint written below stops resolving, while the script it points at has not changed at
  * all. Several of the entries below are in exactly that state today.
  *
- * That is not a defect, because nothing uses these outpoints as written. Any dep that
+ * That is not a defect, because these outpoints are not what gets used. Any dep that
  * carries a `type` is resolved against the chain by {@link Client.getCellDeps} before it
  * reaches a transaction: the type id survives the cell being replaced, so the live cell is
- * found and the stale outpoint is discarded. Transaction building goes through that path,
- * including {@link Transaction.addCellDepsOfKnownScripts} and every signer that calls it.
+ * found and its outpoint replaces the one written here. Transaction building goes through
+ * that path, including {@link Transaction.addCellDepsOfKnownScripts} and every signer that
+ * calls it.
+ *
+ * The one case where a stale outpoint below would reach a transaction is a lookup that
+ * comes back empty, from a node whose indexer has not caught up or does not carry the
+ * cell. A node that errors throws instead.
  *
  * So the rule for maintaining this file is:
  *
