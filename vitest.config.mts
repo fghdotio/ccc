@@ -6,8 +6,11 @@ const packages = [
   "packages/did-ckb",
   "packages/libp2p",
   "packages/nip07",
+  "packages/okx",
   "packages/ssri",
   "packages/type-id",
+  "packages/uni-sat",
+  "packages/xverse",
 ];
 
 export default defineConfig({
