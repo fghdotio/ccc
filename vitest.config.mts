@@ -4,6 +4,7 @@ const packages = [
   "packages/connector",
   "packages/core",
   "packages/did-ckb",
+  "packages/joy-id",
   "packages/libp2p",
   "packages/nip07",
   "packages/okx",
