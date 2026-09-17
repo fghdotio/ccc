@@ -4,7 +4,7 @@ import { lpStream } from "@libp2p/utils";
 import { dialKnownAddresses } from "./dial.js";
 
 const DEFAULT_MAX_MESSAGE_LENGTH = 1024 * 1024;
-const DEFAULT_TIMEOUT = 120_000;
+const DEFAULT_TIMEOUT = 30_000;
 
 export type JsonRpcTransportLibp2pConfig = {
   protocol: string;

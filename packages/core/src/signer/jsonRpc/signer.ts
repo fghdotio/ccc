@@ -10,7 +10,10 @@ import { hexFrom } from "../../hex/index.js";
 import { JsonRpcError, RequestorJsonRpc } from "../../jsonRpc/index.js";
 import { retry, waitForAvailability } from "../../utils/index.js";
 import { Signer } from "../signer/index.js";
-import type { SignerJsonRpcResultRecord } from "./handler.js";
+import {
+  SignerJsonRpcErrorCode,
+  type SignerJsonRpcResultRecord,
+} from "./handler.js";
 import { signerJsonRpcNetworkIdFromAddressPrefix } from "./network.js";
 import {
   SignerJsonRpcInfo,
@@ -245,23 +248,44 @@ export class SignerJsonRpc extends Signer {
     outTransformer?: Parameters<RequestorJsonRpc["request"]>[3],
   ): Promise<unknown> {
     const requestId = hexFrom(randomBytes(16));
+    const sessionId = method === "get_info" ? undefined : this.info.sessionId;
 
-    try {
-      return await this.requestor.request(
+    const result = this.requestor
+      .request(
         method,
-        [requestId, ...params],
+        [
+          {
+            request_id: requestId,
+            ...(sessionId ? { session_id: sessionId } : {}),
+          },
+          ...params,
+        ],
         inTransformers ? [undefined, ...inTransformers] : undefined,
         outTransformer,
-      );
-    } catch (cause) {
-      if (cause instanceof JsonRpcError) throw cause;
+      )
+      .catch((cause: unknown) => {
+        if (cause instanceof JsonRpcError) throw cause;
+        if (!sessionId) throw cause;
 
-      return this.recoverResult(requestId, outTransformer);
+        return this.recoverResult(requestId, sessionId, outTransformer);
+      });
+
+    try {
+      return await result;
+    } catch (cause) {
+      if (
+        cause instanceof JsonRpcError &&
+        cause.code === Number(SignerJsonRpcErrorCode.InvalidSession)
+      ) {
+        this.replace();
+      }
+      throw cause;
     }
   }
 
   private async recoverResult(
     requestId: string,
+    sessionId: string,
     outTransformer?: Parameters<RequestorJsonRpc["request"]>[3],
   ) {
     return retry(
@@ -277,7 +301,7 @@ export class SignerJsonRpc extends Signer {
                 return resolve(
                   (await this.requestor.request(
                     "get_result",
-                    [requestId],
+                    [{ session_id: sessionId }, requestId],
                     undefined,
                     undefined,
                     { timeout: GET_RESULT_TIMEOUT_MS },

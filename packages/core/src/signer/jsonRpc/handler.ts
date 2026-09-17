@@ -1,12 +1,16 @@
+import { randomBytes } from "@noble/hashes/utils.js";
 import type { Transaction } from "../../ckb/index.js";
 import { JsonRpcTransformers } from "../../client/jsonRpc/advanced.js";
+import { hexFrom } from "../../hex/index.js";
 import { JsonRpcError, type JsonRpcPayload } from "../../jsonRpc/index.js";
 import { abortSignalAny, sleep } from "../../utils/index.js";
+import { OwnerUnique } from "../../utils/owner/unique.js";
 import type { Signer } from "../signer/index.js";
 import { signerJsonRpcNetworkIdFromAddressPrefix } from "./network.js";
 import {
   SignerJsonRpcTransformers,
   type SignerJsonRpcInfo,
+  type SignerJsonRpcInfoPayload,
   type SignerJsonRpcMessageToSign,
 } from "./transformers.js";
 
@@ -26,161 +30,193 @@ export enum SignerJsonRpcErrorCode {
   InvalidState = -32001,
   NetworkMismatch = -32002,
   UserRejected = -32003,
+  InvalidSession = -32004,
   DuplicateRequestId = -32005,
 }
 
-export type SignerJsonRpcHandlerOptions = { signal?: AbortSignal };
+export type SignerJsonRpcProviderSessionOptions = { signal?: AbortSignal };
 
 export type SignerJsonRpcResultRecord =
   | { status: "not_found" }
   | { status: "pending" }
   | { status: "completed"; result: unknown };
 
-export type SignerJsonRpcHandlerConfig = {
+export type SignerJsonRpcProviderSessionConfig = {
   getSigner: () => Signer | undefined;
   getSignerMetadata?: () => Pick<SignerJsonRpcInfo, "name" | "icon">;
   /** Connects the requested network and returns its connected Signer. */
   connect: (
     networkId: string,
-    options?: SignerJsonRpcHandlerOptions,
+    options?: SignerJsonRpcProviderSessionOptions,
   ) => Promise<Signer>;
   confirmRequest: (
     request: SignerJsonRpcConfirmation,
-    options?: SignerJsonRpcHandlerOptions,
+    options?: SignerJsonRpcProviderSessionOptions,
   ) => Promise<boolean>;
 };
 
-export class SignerJsonRpcHandler {
+export class SignerJsonRpcProviderSession {
+  private readonly abortController = new AbortController();
+  private readonly id = hexFrom(randomBytes(16));
   private readonly resultRecords = new Map<string, Promise<unknown>>();
   private readonly handlers;
+  private info?: SignerJsonRpcInfoPayload;
+  private connected = false;
 
-  constructor(private readonly config: SignerJsonRpcHandlerConfig) {
+  private constructor(
+    private readonly config: SignerJsonRpcProviderSessionConfig,
+  ) {
     this.handlers = new Map<
       string,
-      (
-        payload: JsonRpcPayload,
-        options?: SignerJsonRpcHandlerOptions,
-      ) => unknown
+      readonly [
+        number,
+        (
+          params: unknown[],
+          options?: SignerJsonRpcProviderSessionOptions,
+        ) => unknown,
+      ]
     >([
       [
         "get_info",
-        (payload) => {
-          requireParams(payload, 0);
-          return buildSignerInfo(
-            this.requireSigner(),
-            this.config.getSignerMetadata?.() ?? {},
-          );
-        },
+        [
+          0,
+          () =>
+            (this.info ??= buildSignerInfo(
+              this.id,
+              this.requireSigner(),
+              this.config.getSignerMetadata?.() ?? {},
+            )),
+        ],
       ],
       [
         "connect",
-        async (payload, options) => {
-          const [networkId] = requireParams(payload, 1);
-          if (typeof networkId !== "string" || !networkId) {
-            throw new JsonRpcError({
-              code: SignerJsonRpcErrorCode.InvalidParams,
-              message: "Invalid network ID",
-            });
-          }
+        [
+          1,
+          async ([networkId], options) => {
+            this.connected = false;
+            if (typeof networkId !== "string" || !networkId) {
+              throw new JsonRpcError({
+                code: SignerJsonRpcErrorCode.InvalidParams,
+                message: "Invalid network ID",
+              });
+            }
 
-          await this.requireConfirmation(
-            { method: "connect", networkId },
-            options,
-          );
+            await this.requireConfirmation(
+              { method: "connect", networkId },
+              options,
+            );
 
-          const signer = await this.config.connect(networkId, options);
-          const actualNetworkId = signerJsonRpcNetworkIdFromAddressPrefix(
-            signer.client.addressPrefix,
-          );
-          if (actualNetworkId !== networkId) {
-            throw new JsonRpcError({
-              code: SignerJsonRpcErrorCode.NetworkMismatch,
-              message: `Signer uses ${actualNetworkId}, expected ${networkId}`,
-            });
-          }
+            const signer = await this.config.connect(networkId, options);
+            options?.signal?.throwIfAborted();
+            const actualNetworkId = signerJsonRpcNetworkIdFromAddressPrefix(
+              signer.client.addressPrefix,
+            );
+            if (actualNetworkId !== networkId) {
+              throw new JsonRpcError({
+                code: SignerJsonRpcErrorCode.NetworkMismatch,
+                message: `Signer uses ${actualNetworkId}, expected ${networkId}`,
+              });
+            }
 
-          return null;
-        },
+            this.connected = true;
+            return null;
+          },
+        ],
       ],
       [
         "get_scripts",
-        async (payload) => {
-          requireParams(payload, 0);
-          return (await this.requireSigner().getAddressObjs()).map(
-            ({ script }) => JsonRpcTransformers.scriptFrom(script),
-          );
-        },
+        [
+          0,
+          async () =>
+            (await this.requireSigner().getAddressObjs()).map(({ script }) =>
+              JsonRpcTransformers.scriptFrom(script),
+            ),
+        ],
       ],
       [
         "get_native_address",
-        (payload) => {
-          requireParams(payload, 0);
-          return this.requireSigner().getInternalAddress();
-        },
+        [0, () => this.requireSigner().getInternalAddress()],
       ],
-      [
-        "get_identity",
-        (payload) => {
-          requireParams(payload, 0);
-          return this.requireSigner().getIdentity();
-        },
-      ],
+      ["get_identity", [0, () => this.requireSigner().getIdentity()]],
       [
         "sign_message",
-        async (payload, options) => {
-          const [message] = requireParams(payload, 1);
-          const parsedMessage = parseMessageParam(message);
-          await this.requireConfirmation(
-            {
-              method: "sign_message",
-              message: SignerJsonRpcTransformers.messageFrom(parsedMessage),
-            },
-            options,
-          );
-          return this.requireSigner().signMessageRaw(parsedMessage);
-        },
+        [
+          1,
+          async ([message], options) => {
+            const parsedMessage = parseMessageParam(message);
+            await this.requireConfirmation(
+              {
+                method: "sign_message",
+                message: SignerJsonRpcTransformers.messageFrom(parsedMessage),
+              },
+              options,
+            );
+            return this.requireSigner().signMessageRaw(parsedMessage);
+          },
+        ],
       ],
       [
         "prepare_transaction",
-        async (payload) => {
-          const [transaction] = requireParams(payload, 1);
-          return JsonRpcTransformers.transactionFrom(
-            await this.requireSigner().prepareTransaction(
-              parseTransactionParam(transaction),
+        [
+          1,
+          async ([transaction]) =>
+            JsonRpcTransformers.transactionFrom(
+              await this.requireSigner().prepareTransaction(
+                parseTransactionParam(transaction),
+              ),
             ),
-          );
-        },
+        ],
       ],
       [
         "sign_transaction",
-        async (payload, options) => {
-          const [transaction] = requireParams(payload, 1);
-          const parsedTransaction = parseTransactionParam(transaction);
-          await this.requireConfirmation(
-            { method: "sign_transaction", transaction: parsedTransaction },
-            options,
-          );
-          return JsonRpcTransformers.transactionFrom(
-            await this.requireSigner().signOnlyTransaction(parsedTransaction),
-          );
-        },
+        [
+          1,
+          async ([transaction], options) => {
+            const parsedTransaction = parseTransactionParam(transaction);
+            await this.requireConfirmation(
+              { method: "sign_transaction", transaction: parsedTransaction },
+              options,
+            );
+            return JsonRpcTransformers.transactionFrom(
+              await this.requireSigner().signOnlyTransaction(parsedTransaction),
+            );
+          },
+        ],
       ],
     ]);
   }
 
-  handle = (payload: JsonRpcPayload, options?: SignerJsonRpcHandlerOptions) => {
-    const positionalParams = requireParams(payload);
+  static open(
+    config: SignerJsonRpcProviderSessionConfig,
+  ): OwnerUnique<SignerJsonRpcProviderSession> {
+    const session = new SignerJsonRpcProviderSession(config);
+    return new OwnerUnique(session, (session) => session.dispose());
+  }
+
+  get isConnected() {
+    return this.connected;
+  }
+
+  handle = (
+    payload: JsonRpcPayload,
+    options?: SignerJsonRpcProviderSessionOptions,
+  ) => {
+    const signal = options?.signal
+      ? abortSignalAny([options.signal, this.abortController.signal])
+      : this.abortController.signal;
+    signal.throwIfAborted();
+
+    const [metadata, ...params] = requireParams(payload);
+    const { requestId, sessionId } = parseRequestMetadata(metadata);
 
     if (payload.method === "get_result") {
-      const [targetRequestId] = requireParams(payload, 1);
+      const [targetRequestId] = params;
+      requireParams(payload, 2);
       requireRequestId(targetRequestId);
-      return this.getResult(
-        this.resultRecords.get(targetRequestId),
-        options?.signal,
-      );
+      this.requireSession(sessionId);
+      return this.getResult(this.resultRecords.get(targetRequestId), signal);
     }
 
-    const [requestId, ...params] = positionalParams;
     requireRequestId(requestId);
     if (this.resultRecords.has(requestId)) {
       throw new JsonRpcError({
@@ -189,18 +225,62 @@ export class SignerJsonRpcHandler {
       });
     }
 
-    const handler = this.handlers.get(payload.method);
-    if (!handler) {
-      throw new JsonRpcError({
-        code: SignerJsonRpcErrorCode.MethodNotFound,
-        message: `Unsupported method: ${payload.method}`,
-      });
-    }
+    return this.executeRequest(requestId, async () => {
+      signal.throwIfAborted();
+      const isGetInfo = payload.method === "get_info";
+      if (isGetInfo) {
+        if (sessionId !== undefined) {
+          throw new JsonRpcError({
+            code: SignerJsonRpcErrorCode.InvalidParams,
+            message: "get_info does not accept a session ID",
+          });
+        }
+      } else {
+        this.requireSession(sessionId);
+      }
 
-    return this.executeRequest(requestId, () =>
-      handler({ ...payload, params }, options),
-    );
+      const entry = this.handlers.get(payload.method);
+      if (!entry) {
+        throw new JsonRpcError({
+          code: SignerJsonRpcErrorCode.MethodNotFound,
+          message: `Unsupported method: ${payload.method}`,
+        });
+      }
+      const [paramCount, handler] = entry;
+      requireParams(payload, paramCount + 1);
+
+      if (!isGetInfo && payload.method !== "connect" && !this.connected) {
+        throw new JsonRpcError({
+          code: SignerJsonRpcErrorCode.InvalidState,
+          message: "Connect must be approved before this request",
+        });
+      }
+      const result = await handler(params, { signal });
+      signal.throwIfAborted();
+      return result;
+    });
   };
+
+  private dispose() {
+    this.connected = false;
+    this.resultRecords.clear();
+    this.abortController.abort(
+      new JsonRpcError({
+        code: SignerJsonRpcErrorCode.InvalidSession,
+        message: "Invalid or expired session",
+      }),
+    );
+  }
+
+  private requireSession(value: unknown) {
+    if (value === this.id) {
+      return;
+    }
+    throw new JsonRpcError({
+      code: SignerJsonRpcErrorCode.InvalidSession,
+      message: "Invalid or expired session",
+    });
+  }
 
   private requireSigner() {
     const signer = this.config.getSigner();
@@ -216,9 +296,11 @@ export class SignerJsonRpcHandler {
 
   private async requireConfirmation(
     request: SignerJsonRpcConfirmation,
-    options?: SignerJsonRpcHandlerOptions,
+    options?: SignerJsonRpcProviderSessionOptions,
   ) {
-    if (!(await this.config.confirmRequest(request, options))) {
+    const confirmed = await this.config.confirmRequest(request, options);
+    options?.signal?.throwIfAborted();
+    if (!confirmed) {
       throw new JsonRpcError({
         code: SignerJsonRpcErrorCode.UserRejected,
         message: "User rejected request",
@@ -311,6 +393,25 @@ function requireParams(payload: JsonRpcPayload, count?: number) {
   return payload.params;
 }
 
+function parseRequestMetadata(value: unknown) {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    ("request_id" in value && typeof value.request_id !== "string") ||
+    ("session_id" in value && typeof value.session_id !== "string")
+  ) {
+    throw new JsonRpcError({
+      code: SignerJsonRpcErrorCode.InvalidParams,
+      message: "Invalid request metadata",
+    });
+  }
+
+  return {
+    requestId: "request_id" in value ? value.request_id : undefined,
+    sessionId: "session_id" in value ? value.session_id : undefined,
+  };
+}
+
 function requireRequestId(value: unknown): asserts value is string {
   if (typeof value !== "string" || !value) {
     throw new JsonRpcError({
@@ -321,10 +422,12 @@ function requireRequestId(value: unknown): asserts value is string {
 }
 
 function buildSignerInfo(
+  sessionId: string,
   signer: Signer,
   metadata: Pick<SignerJsonRpcInfo, "name" | "icon">,
 ) {
   return SignerJsonRpcTransformers.infoFrom({
+    sessionId,
     type: signer.type,
     signType: signer.signType,
     name: metadata.name,

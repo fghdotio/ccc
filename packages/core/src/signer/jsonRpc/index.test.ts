@@ -6,8 +6,19 @@ import {
   JsonRpcTransport,
 } from "../../jsonRpc/index.js";
 import { SignerSignType, SignerType } from "../signer/index.js";
-import { SignerJsonRpc } from "./index.js";
+import { SignerJsonRpc, SignerJsonRpcErrorCode } from "./index.js";
 import { SignerJsonRpcTransformers } from "./transformers.js";
+
+const SESSION_ID = `0x${"11".repeat(16)}`;
+
+function infoResult(overrides: Record<string, unknown> = {}) {
+  return {
+    session_id: SESSION_ID,
+    type: SignerType.CKB,
+    sign_type: SignerSignType.CkbSecp256k1,
+    ...overrides,
+  };
+}
 
 function response(payload: JsonRpcPayload, result: unknown): JsonRpcResponse {
   return {
@@ -21,11 +32,13 @@ describe("SignerJsonRpc", () => {
   it("serializes signer info with snake-case keys", () => {
     expect(
       SignerJsonRpcTransformers.infoFrom({
+        sessionId: SESSION_ID,
         type: SignerType.CKB,
         signType: SignerSignType.CkbSecp256k1,
         name: "Test wallet",
       }),
     ).toEqual({
+      session_id: SESSION_ID,
       type: SignerType.CKB,
       sign_type: SignerSignType.CkbSecp256k1,
       name: "Test wallet",
@@ -34,34 +47,52 @@ describe("SignerJsonRpc", () => {
 
   it("loads info before explicitly connecting", async () => {
     const client = new ClientPublicTestnet();
-    const requests: Array<[string, unknown]> = [];
+    const requests: Array<[string, unknown[]]> = [];
     const transport: JsonRpcTransport = {
       async request(payload) {
-        requests.push([payload.method, (payload.params as unknown[]).slice(1)]);
+        requests.push([payload.method, payload.params as unknown[]]);
         if (payload.method === "connect") {
           return response(payload, null);
         }
 
-        return response(payload, {
-          type: SignerType.CKB,
-          sign_type: SignerSignType.CkbSecp256k1,
-          name: "Test wallet",
-          icon: "https://example.com/icon.png",
-        });
+        return response(
+          payload,
+          infoResult({
+            name: "Test wallet",
+            icon: "https://example.com/icon.png",
+          }),
+        );
       },
     };
     const signer = await SignerJsonRpc.new(client, { transport });
+    const getInfoRequestId = (requests[0]?.[1][0] as { request_id: string })
+      .request_id;
+    expect(getInfoRequestId).toMatch(/^0x[0-9a-f]{32}$/);
 
-    expect(requests).toEqual([["get_info", []]]);
+    expect(requests).toEqual([
+      ["get_info", [{ request_id: getInfoRequestId }]],
+    ]);
     await expect(signer.isConnected()).resolves.toBe(false);
     expect(signer.name).toBe("Test wallet");
     expect(signer.icon).toBe("https://example.com/icon.png");
 
     await signer.connect();
+    const connectRequestId = (requests[1]?.[1][0] as { request_id: string })
+      .request_id;
+    expect(connectRequestId).toMatch(/^0x[0-9a-f]{32}$/);
 
     expect(requests).toEqual([
-      ["get_info", []],
-      ["connect", ["ckb-testnet"]],
+      ["get_info", [{ request_id: getInfoRequestId }]],
+      [
+        "connect",
+        [
+          {
+            request_id: connectRequestId,
+            session_id: SESSION_ID,
+          },
+          "ckb-testnet",
+        ],
+      ],
     ]);
     await expect(signer.isConnected()).resolves.toBe(true);
   });
@@ -80,10 +111,7 @@ describe("SignerJsonRpc", () => {
           return response(payload, null);
         }
 
-        return response(payload, {
-          type: SignerType.CKB,
-          sign_type: SignerSignType.CkbSecp256k1,
-        });
+        return response(payload, infoResult());
       },
     };
     const signer = await SignerJsonRpc.new(new ClientPublicTestnet(), {
@@ -110,10 +138,7 @@ describe("SignerJsonRpc", () => {
         return response(
           payload,
           payload.method === "get_info"
-            ? {
-                type: SignerType.CKB,
-                sign_type: SignerSignType.CkbSecp256k1,
-              }
+            ? infoResult()
             : [
                 {
                   code_hash: `0x${"00".repeat(32)}`,
@@ -133,15 +158,12 @@ describe("SignerJsonRpc", () => {
     expect(methods).toEqual(["get_info", "get_scripts"]);
   });
 
-  it("keeps input transformers aligned after the request ID", async () => {
+  it("keeps input transformers aligned after the request metadata", async () => {
     let signMessageParams: unknown[] | undefined;
     const transport: JsonRpcTransport = {
       async request(payload) {
         if (payload.method === "get_info") {
-          return response(payload, {
-            type: SignerType.CKB,
-            sign_type: SignerSignType.CkbSecp256k1,
-          });
+          return response(payload, infoResult());
         }
         signMessageParams = payload.params as unknown[];
         return response(payload, "signature");
@@ -152,8 +174,15 @@ describe("SignerJsonRpc", () => {
     });
 
     await expect(signer.signMessageRaw("hello")).resolves.toBe("signature");
+    const signMessageRequestId = (
+      signMessageParams?.[0] as { request_id: string }
+    ).request_id;
+    expect(signMessageRequestId).toMatch(/^0x[0-9a-f]{32}$/);
     expect(signMessageParams).toEqual([
-      expect.stringMatching(/^0x[0-9a-f]{32}$/),
+      {
+        request_id: signMessageRequestId,
+        session_id: SESSION_ID,
+      },
       { type: "string", value: "hello" },
     ]);
   });
@@ -165,21 +194,22 @@ describe("SignerJsonRpc", () => {
     const transport: JsonRpcTransport = {
       async request(payload, options) {
         if (payload.method === "get_info") {
-          return response(payload, {
-            type: SignerType.CKB,
-            sign_type: SignerSignType.CkbSecp256k1,
-          });
+          return response(payload, infoResult());
         }
         if (payload.method === "get_result") {
           getResultTimeout = options?.timeout;
-          expect(payload.params).toEqual([identityRequestId]);
+          expect(payload.params).toEqual([
+            { session_id: SESSION_ID },
+            identityRequestId,
+          ]);
           return response(payload, {
             status: "completed",
             result: "identity",
           });
         }
         identityRequests += 1;
-        [identityRequestId] = payload.params as unknown[];
+        const [metadata] = payload.params as [{ request_id: string }];
+        identityRequestId = metadata.request_id;
         throw new Error("Response lost");
       },
     };
@@ -198,10 +228,7 @@ describe("SignerJsonRpc", () => {
     const transport: JsonRpcTransport = {
       async request(payload) {
         if (payload.method === "get_info") {
-          return response(payload, {
-            type: SignerType.CKB,
-            sign_type: SignerSignType.CkbSecp256k1,
-          });
+          return response(payload, infoResult());
         }
         if (payload.method === "get_result") {
           getResultRequests += 1;
@@ -241,6 +268,71 @@ describe("SignerJsonRpc", () => {
       vi.useRealTimers();
     }
   });
+
+  it("replaces itself when a request reports an expired session", async () => {
+    const transport: JsonRpcTransport = {
+      async request(payload) {
+        if (payload.method === "get_info") {
+          return response(payload, infoResult());
+        }
+        if (payload.method === "connect") {
+          return response(payload, null);
+        }
+        return {
+          jsonrpc: "2.0",
+          id: payload.id,
+          error: {
+            code: SignerJsonRpcErrorCode.InvalidSession,
+            message: "Invalid or expired session",
+          },
+        };
+      },
+    };
+    const signer = await SignerJsonRpc.new(new ClientPublicTestnet(), {
+      transport,
+    });
+    await signer.connect();
+    const replaced = vi.fn();
+    signer.onReplaced(replaced);
+
+    await expect(signer.getIdentity()).rejects.toMatchObject({
+      code: SignerJsonRpcErrorCode.InvalidSession,
+    });
+    expect(replaced).toHaveBeenCalledOnce();
+    await expect(signer.isConnected()).resolves.toBe(false);
+  });
+
+  it("replaces itself when result recovery reports an expired session", async () => {
+    const transport: JsonRpcTransport = {
+      async request(payload) {
+        if (payload.method === "get_info") {
+          return response(payload, infoResult());
+        }
+        if (payload.method === "get_result") {
+          return {
+            jsonrpc: "2.0",
+            id: payload.id,
+            error: {
+              code: SignerJsonRpcErrorCode.InvalidSession,
+              message: "Invalid or expired session",
+            },
+          };
+        }
+        throw new Error("Response lost");
+      },
+    };
+    const signer = await SignerJsonRpc.new(new ClientPublicTestnet(), {
+      transport,
+    });
+    const replaced = vi.fn();
+    signer.onReplaced(replaced);
+
+    await expect(signer.getIdentity()).rejects.toMatchObject({
+      code: SignerJsonRpcErrorCode.InvalidSession,
+    });
+    expect(replaced).toHaveBeenCalledOnce();
+  });
+
   it("caches successful read-only requests until replacement", async () => {
     const requests = new Map<string, number>();
     let resolveScripts = () => {};
@@ -251,10 +343,7 @@ describe("SignerJsonRpc", () => {
       async request(payload) {
         requests.set(payload.method, (requests.get(payload.method) ?? 0) + 1);
         if (payload.method === "get_info") {
-          return response(payload, {
-            type: SignerType.CKB,
-            sign_type: SignerSignType.CkbSecp256k1,
-          });
+          return response(payload, infoResult());
         }
         if (payload.method === "get_scripts") {
           await scriptsPending;
@@ -318,10 +407,7 @@ describe("SignerJsonRpc", () => {
     const transport: JsonRpcTransport = {
       async request(payload) {
         if (payload.method === "get_info") {
-          return response(payload, {
-            type: SignerType.CKB,
-            sign_type: SignerSignType.CkbSecp256k1,
-          });
+          return response(payload, infoResult());
         }
 
         if (payload.method === "get_result") {
@@ -359,10 +445,7 @@ describe("SignerJsonRpc", () => {
     const transport: JsonRpcTransport & { close(): Promise<void> } = {
       close,
       async request(payload) {
-        return response(payload, {
-          type: SignerType.CKB,
-          sign_type: SignerSignType.CkbSecp256k1,
-        });
+        return response(payload, infoResult());
       },
     };
     const signer = await SignerJsonRpc.new(new ClientPublicTestnet(), {
@@ -397,10 +480,7 @@ describe("SignerJsonRpc", () => {
     const nextListener = vi.fn();
     const transport: JsonRpcTransport = {
       async request(payload) {
-        return response(payload, {
-          type: SignerType.CKB,
-          sign_type: SignerSignType.CkbSecp256k1,
-        });
+        return response(payload, infoResult());
       },
     };
     const signer = await SignerJsonRpc.new(new ClientPublicTestnet(), {

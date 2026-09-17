@@ -1,22 +1,39 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { ClientPublicTestnet } from "../../client/index.js";
 import { JsonRpcError, type JsonRpcPayload } from "../../jsonRpc/index.js";
 import { SignerSignType, SignerType, type Signer } from "../signer/index.js";
-import { SignerJsonRpcErrorCode, SignerJsonRpcHandler } from "./index.js";
+import {
+  SignerJsonRpcErrorCode,
+  SignerJsonRpcProviderSession,
+  type SignerJsonRpcProviderSessionConfig,
+} from "./index.js";
 import { SignerJsonRpcTransformers } from "./transformers.js";
 
 let nextRequestId = 0;
+const sessionOwners: ReturnType<typeof SignerJsonRpcProviderSession.open>[] =
+  [];
+
+afterEach(async () => {
+  await Promise.all(sessionOwners.splice(0).map((owner) => owner.dispose()));
+});
 
 function payload(
   method: string,
   params: unknown[] = [],
   requestId = `request-${nextRequestId++}`,
+  sessionId?: string,
 ): JsonRpcPayload {
   return {
     id: 0,
     jsonrpc: "2.0",
     method,
-    params: method === "get_result" ? params : [requestId, ...params],
+    params: [
+      {
+        ...(method !== "get_result" ? { request_id: requestId } : {}),
+        ...(sessionId ? { session_id: sessionId } : {}),
+      },
+      ...(method === "get_result" ? [requestId] : params),
+    ],
   };
 }
 
@@ -31,17 +48,57 @@ function mockSigner(overrides: Partial<Signer> = {}) {
   } as unknown as Signer;
 }
 
-describe("SignerJsonRpcHandler", () => {
-  it("returns signer information with application metadata", async () => {
+function createSession(
+  signer: Signer,
+  overrides: Partial<SignerJsonRpcProviderSessionConfig> = {},
+) {
+  const owner = SignerJsonRpcProviderSession.open({
+    connect: async () => signer,
+    confirmRequest: async () => true,
+    getSigner: () => signer,
+    ...overrides,
+  });
+  sessionOwners.push(owner);
+  return owner.value;
+}
+
+async function getSessionId(session: SignerJsonRpcProviderSession) {
+  const info = (await session.handle(payload("get_info"))) as {
+    session_id: string;
+  };
+  return info.session_id;
+}
+
+async function connect(
+  session: SignerJsonRpcProviderSession,
+  sessionId: string,
+) {
+  await session.handle(
+    payload("connect", ["ckb-testnet"], undefined, sessionId),
+  );
+}
+
+describe("SignerJsonRpcProviderSession", () => {
+  it("creates a unique session ID for each lifecycle", async () => {
     const signer = mockSigner();
-    const handler = new SignerJsonRpcHandler({
-      connect: async () => signer,
-      confirmRequest: async () => true,
-      getSigner: () => signer,
+    const first = await getSessionId(createSession(signer));
+    const second = await getSessionId(createSession(signer));
+
+    expect(first).not.toBe(second);
+  });
+
+  it("returns its session ID with signer information", async () => {
+    const signer = mockSigner();
+    const session = createSession(signer, {
       getSignerMetadata: () => ({ name: "Test wallet", icon: "test.svg" }),
     });
 
-    await expect(handler.handle(payload("get_info"))).resolves.toEqual({
+    const info = (await session.handle(payload("get_info"))) as {
+      session_id: string;
+    };
+    expect(info.session_id).toMatch(/^0x[0-9a-f]{32}$/);
+    expect(info).toEqual({
+      session_id: info.session_id,
       type: SignerType.CKB,
       sign_type: SignerSignType.CkbSecp256k1,
       name: "Test wallet",
@@ -49,60 +106,96 @@ describe("SignerJsonRpcHandler", () => {
     });
   });
 
+  it("requires its session ID and a successful connect", async () => {
+    const signer = mockSigner({
+      getIdentity: vi.fn(async () => "identity"),
+    });
+    const session = createSession(signer);
+    const sessionId = await getSessionId(session);
+
+    await expect(
+      session.handle(payload("connect", ["ckb-testnet"], undefined, "wrong")),
+    ).rejects.toMatchObject({ code: SignerJsonRpcErrorCode.InvalidSession });
+    await expect(
+      session.handle(payload("get_identity", [], undefined, sessionId)),
+    ).rejects.toMatchObject({ code: SignerJsonRpcErrorCode.InvalidState });
+
+    expect(session.isConnected).toBe(false);
+    await connect(session, sessionId);
+    expect(session.isConnected).toBe(true);
+    await expect(
+      session.handle(payload("get_identity", [], undefined, sessionId)),
+    ).resolves.toBe("identity");
+  });
+
   it("confirms and connects the requested network", async () => {
     const signerConnect = vi.fn(async () => {});
     const signer = mockSigner({ connect: signerConnect });
-    const connect = vi.fn(async () => signer);
-    const confirmRequest = vi.fn(async () => true);
-    const handler = new SignerJsonRpcHandler({
-      connect,
+    const providerConnect = vi.fn<
+      SignerJsonRpcProviderSessionConfig["connect"]
+    >(async () => signer);
+    const confirmRequest = vi.fn<
+      SignerJsonRpcProviderSessionConfig["confirmRequest"]
+    >(async () => true);
+    const session = createSession(signer, {
+      connect: providerConnect,
       confirmRequest,
-      getSigner: () => signer,
     });
+    const sessionId = await getSessionId(session);
 
     await expect(
-      handler.handle(payload("connect", ["ckb-testnet"])),
+      session.handle(payload("connect", ["ckb-testnet"], undefined, sessionId)),
     ).resolves.toBeNull();
-    expect(confirmRequest).toHaveBeenCalledWith(
-      { method: "connect", networkId: "ckb-testnet" },
-      undefined,
-    );
-    expect(connect).toHaveBeenCalledWith("ckb-testnet", undefined);
+    const [confirmation, confirmationOptions] =
+      confirmRequest.mock.calls[0] ?? [];
+    expect(confirmation).toEqual({
+      method: "connect",
+      networkId: "ckb-testnet",
+    });
+    expect(confirmationOptions?.signal).toBeInstanceOf(AbortSignal);
+    const [networkId, connectOptions] = providerConnect.mock.calls[0] ?? [];
+    expect(networkId).toBe("ckb-testnet");
+    expect(connectOptions?.signal).toBeInstanceOf(AbortSignal);
     expect(signerConnect).not.toHaveBeenCalled();
   });
 
   it("validates methods and parameters with JSON-RPC errors", async () => {
     const signer = mockSigner();
-    const handler = new SignerJsonRpcHandler({
-      connect: async () => signer,
-      confirmRequest: async () => true,
-      getSigner: () => signer,
-    });
+    const session = createSession(signer);
+    const sessionId = await getSessionId(session);
 
-    expect(() => handler.handle(payload("unknown"))).toThrow(
+    await expect(
+      session.handle(payload("unknown", [], undefined, sessionId)),
+    ).rejects.toEqual(
       new JsonRpcError({
         code: SignerJsonRpcErrorCode.MethodNotFound,
         message: "Unsupported method: unknown",
       }),
     );
-    await expect(handler.handle(payload("connect"))).rejects.toMatchObject({
-      code: SignerJsonRpcErrorCode.InvalidParams,
-    });
+    await expect(
+      session.handle(payload("connect", [], undefined, sessionId)),
+    ).rejects.toMatchObject({ code: SignerJsonRpcErrorCode.InvalidParams });
   });
 
   it("does not sign rejected requests", async () => {
     const message = Uint8Array.from([1, 2]);
     const signMessageRaw = vi.fn();
     const signer = mockSigner({ signMessageRaw });
-    const confirmRequest = vi.fn(async () => false);
-    const handler = new SignerJsonRpcHandler({
-      connect: async () => signer,
-      confirmRequest,
-      getSigner: () => signer,
-    });
+    const confirmRequest = vi
+      .fn<SignerJsonRpcProviderSessionConfig["confirmRequest"]>()
+      .mockResolvedValueOnce(true)
+      .mockResolvedValue(false);
+    const session = createSession(signer, { confirmRequest });
+    const sessionId = await getSessionId(session);
+    await connect(session, sessionId);
 
-    const request = handler.handle(
-      payload("sign_message", [SignerJsonRpcTransformers.messageFrom(message)]),
+    const request = session.handle(
+      payload(
+        "sign_message",
+        [SignerJsonRpcTransformers.messageFrom(message)],
+        undefined,
+        sessionId,
+      ),
     );
 
     await expect(request).rejects.toEqual(
@@ -111,35 +204,42 @@ describe("SignerJsonRpcHandler", () => {
         message: "User rejected request",
       }),
     );
-    expect(confirmRequest).toHaveBeenCalledWith(
-      {
-        method: "sign_message",
-        message: { type: "bytes", value: "0x0102" },
-      },
-      undefined,
-    );
+    const [confirmation, confirmationOptions] =
+      confirmRequest.mock.calls.at(-1) ?? [];
+    expect(confirmation).toEqual({
+      method: "sign_message",
+      message: { type: "bytes", value: "0x0102" },
+    });
+    expect(confirmationOptions?.signal).toBeInstanceOf(AbortSignal);
     expect(signMessageRaw).not.toHaveBeenCalled();
+  });
+
+  it("requires a session ID when querying results", async () => {
+    const session = createSession(mockSigner());
+    const requestId = "get-info-request";
+    await session.handle(payload("get_info", [], requestId));
+
+    expect(() => session.handle(payload("get_result", [], requestId))).toThrow(
+      expect.objectContaining({
+        code: SignerJsonRpcErrorCode.InvalidSession,
+      }),
+    );
   });
 
   it("caches completed results and rejects duplicate request IDs", async () => {
     const signer = mockSigner({
       getIdentity: vi.fn(async () => "identity"),
     });
-    const handler = new SignerJsonRpcHandler({
-      connect: async () => signer,
-      confirmRequest: async () => true,
-      getSigner: () => signer,
-    });
-    const request = payload("get_identity", [], "same-request");
+    const session = createSession(signer);
+    const sessionId = await getSessionId(session);
+    await connect(session, sessionId);
+    const request = payload("get_identity", [], "same-request", sessionId);
 
-    await expect(handler.handle(request)).resolves.toBe("identity");
+    await expect(session.handle(request)).resolves.toBe("identity");
     await expect(
-      handler.handle(payload("get_result", ["same-request"])),
-    ).resolves.toEqual({
-      status: "completed",
-      result: "identity",
-    });
-    expect(() => handler.handle(request)).toThrow(
+      session.handle(payload("get_result", [], "same-request", sessionId)),
+    ).resolves.toEqual({ status: "completed", result: "identity" });
+    expect(() => session.handle(request)).toThrow(
       new JsonRpcError({
         code: SignerJsonRpcErrorCode.DuplicateRequestId,
         message: "Request ID already exists",
@@ -157,17 +257,63 @@ describe("SignerJsonRpcHandler", () => {
         throw error;
       }),
     });
-    const handler = new SignerJsonRpcHandler({
-      connect: async () => signer,
-      confirmRequest: async () => true,
-      getSigner: () => signer,
-    });
+    const session = createSession(signer);
+    const sessionId = await getSessionId(session);
+    await connect(session, sessionId);
 
     await expect(
-      handler.handle(payload("get_identity", [], "failed-request")),
+      session.handle(payload("get_identity", [], "failed-request", sessionId)),
     ).rejects.toBe(error);
     await expect(
-      handler.handle(payload("get_result", ["failed-request"])),
+      session.handle(payload("get_result", [], "failed-request", sessionId)),
     ).rejects.toBe(error);
+  });
+
+  it("keeps signer information fixed for its lifecycle", async () => {
+    let name = "First name";
+    const session = createSession(mockSigner(), {
+      getSignerMetadata: () => ({ name }),
+    });
+    const first = await session.handle(payload("get_info"));
+    name = "Second name";
+
+    await expect(session.handle(payload("get_info"))).resolves.toEqual(first);
+  });
+
+  it("aborts pending requests when its owner is disposed", async () => {
+    let requestSignal: AbortSignal | undefined;
+    const signer = mockSigner();
+    const owner = SignerJsonRpcProviderSession.open({
+      connect: async () => signer,
+      confirmRequest: (_request, options) => {
+        requestSignal = options?.signal;
+        return new Promise<boolean>((resolve) =>
+          options?.signal?.addEventListener("abort", () => resolve(false), {
+            once: true,
+          }),
+        );
+      },
+      getSigner: () => signer,
+    });
+    sessionOwners.push(owner);
+    const session = owner.value;
+    const sessionId = await getSessionId(session);
+    const request = session.handle(
+      payload("connect", ["ckb-testnet"], undefined, sessionId),
+    );
+    await vi.waitFor(() => expect(requestSignal).toBeDefined());
+
+    await owner.dispose();
+
+    await expect(request).rejects.toMatchObject({
+      code: SignerJsonRpcErrorCode.InvalidSession,
+      message: "Invalid or expired session",
+    });
+    expect(session.isConnected).toBe(false);
+    expect(() => session.handle(payload("get_info"))).toThrow(
+      expect.objectContaining({
+        code: SignerJsonRpcErrorCode.InvalidSession,
+      }),
+    );
   });
 });
