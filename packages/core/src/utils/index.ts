@@ -198,6 +198,69 @@ export function sleep(ms: NumLike, signal?: AbortSignal): Promise<void> {
 }
 
 /**
+ * Waits until the current browser page is visible and the browser reports it
+ * is online. This does not guarantee that a remote endpoint is reachable.
+ * Resolves immediately outside a browser and rejects with the abort reason
+ * when the optional signal is aborted.
+ * @public
+ */
+export async function waitForAvailability(signal?: AbortSignal): Promise<void> {
+  signal?.throwIfAborted();
+
+  if (
+    typeof window === "undefined" ||
+    typeof document === "undefined" ||
+    typeof navigator === "undefined"
+  ) {
+    return;
+  }
+
+  const isAvailable = () =>
+    document.visibilityState === "visible" && navigator.onLine;
+  if (isAvailable()) {
+    return;
+  }
+
+  await new Promise<void>((resolve, reject) => {
+    let settled = false;
+
+    function cleanup() {
+      document.removeEventListener("visibilitychange", onAvailabilityChange);
+      window.removeEventListener("online", onAvailabilityChange);
+      signal?.removeEventListener("abort", onAbort);
+    }
+
+    function onAvailabilityChange() {
+      if (settled || !isAvailable()) {
+        return;
+      }
+
+      settled = true;
+      cleanup();
+      resolve();
+    }
+
+    function onAbort() {
+      if (settled) return;
+
+      settled = true;
+      cleanup();
+      reject(signal?.reason);
+    }
+
+    document.addEventListener("visibilitychange", onAvailabilityChange);
+    window.addEventListener("online", onAvailabilityChange);
+    signal?.addEventListener("abort", onAbort, { once: true });
+
+    if (signal?.aborted) {
+      onAbort();
+    } else {
+      onAvailabilityChange();
+    }
+  });
+}
+
+/**
  * @public
  */
 export function isWebview(userAgent: string): boolean {
