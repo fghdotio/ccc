@@ -74,6 +74,8 @@ describe("KhieConnectionController", () => {
     const { dial, node, refresh, target } = createNode([]);
     const controller = new KhieConnectionController(node, peerId);
 
+    await vi.advanceTimersByTimeAsync(0);
+    vi.clearAllMocks();
     dispatchPeerEvent(target, peerId);
     await vi.advanceTimersByTimeAsync(0);
     expect(refresh).toHaveBeenCalledWith(peerId);
@@ -103,6 +105,8 @@ describe("KhieConnectionController", () => {
     const { dial, node, target } = createNode([]);
     const controller = new KhieConnectionController(node, peerId);
 
+    await vi.advanceTimersByTimeAsync(0);
+    vi.clearAllMocks();
     dispatchPeerEvent(target, peerId);
     await vi.advanceTimersByTimeAsync(0);
     expect(dial).toHaveBeenCalledOnce();
@@ -126,6 +130,8 @@ describe("KhieConnectionController", () => {
     const { dial, getConnections, node, target } = createNode([]);
     const controller = new KhieConnectionController(node, peerId);
 
+    await vi.advanceTimersByTimeAsync(0);
+    vi.clearAllMocks();
     dispatchPeerEvent(target, peerId);
     await vi.advanceTimersByTimeAsync(0);
     expect(dial).toHaveBeenCalledOnce();
@@ -142,11 +148,14 @@ describe("KhieConnectionController", () => {
     const peerId = testPeerId(PAIRED_PEER_ID);
     const { dial, getConnections, node, refresh, target } = createNode([]);
     const directConnection = testConnection(true);
+    const controller = new KhieConnectionController(node, peerId);
+
+    await vi.advanceTimersByTimeAsync(0);
+    vi.clearAllMocks();
     dial.mockImplementationOnce(async () => {
       getConnections.mockReturnValue([directConnection]);
       return directConnection;
     });
-    const controller = new KhieConnectionController(node, peerId);
 
     dispatchPeerEvent(target, peerId);
     await vi.advanceTimersByTimeAsync(0);
