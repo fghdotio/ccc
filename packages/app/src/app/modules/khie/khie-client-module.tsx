@@ -372,6 +372,21 @@ export function KhieClientModule({
     });
     logCurrent("Starting signer libp2p node");
 
+    const signerJsonRpcHandler = new ccc.SignerJsonRpcHandler({
+      connect: (networkId, options) =>
+        connectSigner(
+          networkId,
+          options?.signal ?? new AbortController().signal,
+        ),
+      confirmRequest: (request, options) =>
+        confirmKhieRequest(
+          request,
+          options?.signal ?? new AbortController().signal,
+        ),
+      getSigner: () => signerRef.current,
+      getSignerMetadata,
+    });
+
     const owner = KhieSignerSession.open({
       endpointUrl: PROVIDER_ENDPOINT_URL,
       handler: async (payload) => {
@@ -397,13 +412,7 @@ export function KhieClientModule({
         );
 
         try {
-          const handleRequest = ccc.buildSignerJsonRpcHandler({
-            connect: (networkId) => connectSigner(networkId, signal),
-            confirmRequest: (request) => confirmKhieRequest(request, signal),
-            getSigner: () => signerRef.current,
-            getSignerMetadata,
-          });
-          const result = await handleRequest(payload);
+          const result = await signerJsonRpcHandler.handle(payload, { signal });
           signal.throwIfAborted();
           const completed = formatRequestCompletion(payload.method);
           if (completed) {
@@ -1266,7 +1275,7 @@ function clientOwnerForNetworkId(networkId: string, current: ccc.Client) {
   }
 
   throw new ccc.JsonRpcError({
-    code: -32001,
+    code: ccc.SignerJsonRpcErrorCode.InvalidState,
     message: `Unsupported network ID: ${networkId}`,
   });
 }
@@ -1321,7 +1330,7 @@ function networkIdFromAddressPrefix(addressPrefix: string) {
   }
 
   throw new ccc.JsonRpcError({
-    code: -32001,
+    code: ccc.SignerJsonRpcErrorCode.InvalidState,
     message: `Unsupported address prefix: ${addressPrefix}`,
   });
 }

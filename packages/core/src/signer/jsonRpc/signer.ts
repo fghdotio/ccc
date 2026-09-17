@@ -1,3 +1,4 @@
+import { randomBytes } from "@noble/hashes/utils.js";
 import { Address } from "../../address/index.js";
 import { Script } from "../../ckb/index.js";
 import { Client } from "../../client/index.js";
@@ -5,8 +6,11 @@ import {
   JsonRpcScript,
   JsonRpcTransformers,
 } from "../../client/jsonRpc/advanced.js";
-import { RequestorJsonRpc } from "../../jsonRpc/index.js";
+import { hexFrom } from "../../hex/index.js";
+import { JsonRpcError, RequestorJsonRpc } from "../../jsonRpc/index.js";
+import { retry, waitForAvailability } from "../../utils/index.js";
 import { Signer } from "../signer/index.js";
+import type { SignerJsonRpcResultRecord } from "./handler.js";
 import { signerJsonRpcNetworkIdFromAddressPrefix } from "./network.js";
 import {
   SignerJsonRpcInfo,
@@ -20,6 +24,10 @@ export type SignerJsonRpcConfig = Omit<
   /** Cleans up integration-owned resources before replacement is announced. */
   disconnectHandler?: () => PromiseLike<void> | void;
 };
+
+const GET_RESULT_RETRY_DELAYS = [1_000, 2_000, 4_000, 8_000] as const;
+const GET_RESULT_RETRY_REPEAT_MS = 10_000;
+const GET_RESULT_TIMEOUT_MS = 20_000;
 
 export class SignerJsonRpc extends Signer {
   private connecting?: Promise<void>;
@@ -42,14 +50,19 @@ export class SignerJsonRpc extends Signer {
   static async new(client: Client, config: SignerJsonRpcConfig) {
     const { disconnectHandler, ...requestorConfig } = config;
     const requestor = RequestorJsonRpc.new(requestorConfig);
-    const info = (await requestor.request(
+    const signer = new SignerJsonRpc(
+      client,
+      requestor,
+      {} as SignerJsonRpcInfo,
+      disconnectHandler,
+    );
+    signer.info = (await signer.request(
       "get_info",
       [],
       [],
       SignerJsonRpcTransformers.infoTo,
     )) as SignerJsonRpcInfo;
-
-    return new SignerJsonRpc(client, requestor, info, disconnectHandler);
+    return signer;
   }
 
   get type() {
@@ -58,10 +71,6 @@ export class SignerJsonRpc extends Signer {
 
   get signType() {
     return this.info.signType;
-  }
-
-  get url() {
-    return this.requestor.url;
   }
 
   get name() {
@@ -111,6 +120,10 @@ export class SignerJsonRpc extends Signer {
     return this.disconnecting;
   }
 
+  private requestConnect = this.buildSender("connect", []) as (
+    networkId: string,
+  ) => Promise<void>;
+
   onReplaced(listener: () => void) {
     this.replacedListeners.add(listener);
     return () => this.replacedListeners.delete(listener);
@@ -138,16 +151,18 @@ export class SignerJsonRpc extends Signer {
       return this.scriptsPromise.then((scripts) => [...scripts]);
     }
 
-    const pending = this.requestor
-      .request("get_scripts", [], [], (scripts: JsonRpcScript[]) =>
+    const pending = this.request(
+      "get_scripts",
+      [],
+      [],
+      (scripts: JsonRpcScript[]) =>
         scripts.map((script) => JsonRpcTransformers.scriptTo(script)),
-      )
-      .catch((cause: unknown) => {
-        if (this.scriptsPromise === pending) {
-          this.scriptsPromise = undefined;
-        }
-        throw cause;
-      }) as Promise<Script[]>;
+    ).catch((cause: unknown) => {
+      if (this.scriptsPromise === pending) {
+        this.scriptsPromise = undefined;
+      }
+      throw cause;
+    }) as Promise<Script[]>;
     this.scriptsPromise = pending;
     return pending.then((scripts) => [...scripts]);
   }
@@ -163,14 +178,14 @@ export class SignerJsonRpc extends Signer {
       return this.internalAddressPromise;
     }
 
-    const pending = this.requestor
-      .request("get_native_address", [], [])
-      .catch((cause: unknown) => {
+    const pending = this.request("get_native_address", [], []).catch(
+      (cause: unknown) => {
         if (this.internalAddressPromise === pending) {
           this.internalAddressPromise = undefined;
         }
         throw cause;
-      }) as Promise<string>;
+      },
+    ) as Promise<string>;
     this.internalAddressPromise = pending;
     return pending;
   }
@@ -180,14 +195,14 @@ export class SignerJsonRpc extends Signer {
       return this.identityPromise;
     }
 
-    const pending = this.requestor
-      .request("get_identity", [], [])
-      .catch((cause: unknown) => {
+    const pending = this.request("get_identity", [], []).catch(
+      (cause: unknown) => {
         if (this.identityPromise === pending) {
           this.identityPromise = undefined;
         }
         throw cause;
-      }) as Promise<string>;
+      },
+    ) as Promise<string>;
     this.identityPromise = pending;
     return pending;
   }
@@ -214,12 +229,7 @@ export class SignerJsonRpc extends Signer {
     outTransformer?: Parameters<RequestorJsonRpc["request"]>[3],
   ): (...request: unknown[]) => Promise<unknown> {
     return async (...request: unknown[]) =>
-      this.requestor.request(
-        rpcMethod,
-        request,
-        inTransformers,
-        outTransformer,
-      );
+      this.request(rpcMethod, request, inTransformers, outTransformer);
   }
 
   private clearReadCache() {
@@ -228,7 +238,76 @@ export class SignerJsonRpc extends Signer {
     this.identityPromise = undefined;
   }
 
-  private requestConnect = this.buildSender("connect", []) as (
-    networkId: string,
-  ) => Promise<void>;
+  private async request(
+    method: string,
+    params: unknown[],
+    inTransformers?: Parameters<RequestorJsonRpc["request"]>[2],
+    outTransformer?: Parameters<RequestorJsonRpc["request"]>[3],
+  ): Promise<unknown> {
+    const requestId = hexFrom(randomBytes(16));
+
+    try {
+      return await this.requestor.request(
+        method,
+        [requestId, ...params],
+        inTransformers ? [undefined, ...inTransformers] : undefined,
+        outTransformer,
+      );
+    } catch (cause) {
+      if (cause instanceof JsonRpcError) throw cause;
+
+      return this.recoverResult(requestId, outTransformer);
+    }
+  }
+
+  private async recoverResult(
+    requestId: string,
+    outTransformer?: Parameters<RequestorJsonRpc["request"]>[3],
+  ) {
+    return retry(
+      [],
+      async ({ resolve, reject, next }) => {
+        try {
+          const result = await retry<SignerJsonRpcResultRecord>(
+            GET_RESULT_RETRY_DELAYS,
+            async ({ resolve, reject }) => {
+              await waitForAvailability();
+
+              try {
+                return resolve(
+                  (await this.requestor.request(
+                    "get_result",
+                    [requestId],
+                    undefined,
+                    undefined,
+                    { timeout: GET_RESULT_TIMEOUT_MS },
+                  )) as SignerJsonRpcResultRecord,
+                );
+              } catch (cause) {
+                if (cause instanceof JsonRpcError) return reject(cause);
+                throw cause;
+              }
+            },
+            { repeat: GET_RESULT_RETRY_REPEAT_MS },
+          );
+
+          if (result.status === "not_found") {
+            return reject(new Error("Signer request result was not found"));
+          }
+          if (result.status === "pending") {
+            return next();
+          }
+          if (result.status !== "completed" || !("result" in result)) {
+            return reject(new Error("Invalid signer request result"));
+          }
+          return resolve(
+            outTransformer ? outTransformer(result.result) : result.result,
+          );
+        } catch (cause) {
+          return reject(cause);
+        }
+      },
+      { repeat: 0 },
+    );
+  }
 }

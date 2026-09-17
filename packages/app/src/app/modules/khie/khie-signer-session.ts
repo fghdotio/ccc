@@ -38,10 +38,10 @@ class KhieConnectionAuthorizer {
       return handler(payload);
     }
 
-    if (payload.method !== "connect") {
+    if (payload.method !== "connect" && payload.method !== "get_result") {
       if (this.connections.get(peer)?.status !== "connected") {
         throw new ccc.JsonRpcError({
-          code: -32001,
+          code: ccc.SignerJsonRpcErrorCode.InvalidState,
           message: "Connect must be approved before this request",
         });
       }
@@ -467,7 +467,7 @@ async function createKhieSignerNode(
               !isSelectedPeer(request.peerId)
             ) {
               throw new ccc.JsonRpcError({
-                code: -32000,
+                code: ccc.SignerJsonRpcErrorCode.ServerError,
                 message: "Peer is not paired for Khie access",
               });
             }

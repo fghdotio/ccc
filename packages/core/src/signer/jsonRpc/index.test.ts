@@ -37,7 +37,7 @@ describe("SignerJsonRpc", () => {
     const requests: Array<[string, unknown]> = [];
     const transport: JsonRpcTransport = {
       async request(payload) {
-        requests.push([payload.method, payload.params]);
+        requests.push([payload.method, (payload.params as unknown[]).slice(1)]);
         if (payload.method === "connect") {
           return response(payload, null);
         }
@@ -133,6 +133,114 @@ describe("SignerJsonRpc", () => {
     expect(methods).toEqual(["get_info", "get_scripts"]);
   });
 
+  it("keeps input transformers aligned after the request ID", async () => {
+    let signMessageParams: unknown[] | undefined;
+    const transport: JsonRpcTransport = {
+      async request(payload) {
+        if (payload.method === "get_info") {
+          return response(payload, {
+            type: SignerType.CKB,
+            sign_type: SignerSignType.CkbSecp256k1,
+          });
+        }
+        signMessageParams = payload.params as unknown[];
+        return response(payload, "signature");
+      },
+    };
+    const signer = await SignerJsonRpc.new(new ClientPublicTestnet(), {
+      transport,
+    });
+
+    await expect(signer.signMessageRaw("hello")).resolves.toBe("signature");
+    expect(signMessageParams).toEqual([
+      expect.stringMatching(/^0x[0-9a-f]{32}$/),
+      { type: "string", value: "hello" },
+    ]);
+  });
+
+  it("recovers a lost response without replaying the original request", async () => {
+    let identityRequestId: unknown;
+    let identityRequests = 0;
+    let getResultTimeout: number | undefined;
+    const transport: JsonRpcTransport = {
+      async request(payload, options) {
+        if (payload.method === "get_info") {
+          return response(payload, {
+            type: SignerType.CKB,
+            sign_type: SignerSignType.CkbSecp256k1,
+          });
+        }
+        if (payload.method === "get_result") {
+          getResultTimeout = options?.timeout;
+          expect(payload.params).toEqual([identityRequestId]);
+          return response(payload, {
+            status: "completed",
+            result: "identity",
+          });
+        }
+        identityRequests += 1;
+        [identityRequestId] = payload.params as unknown[];
+        throw new Error("Response lost");
+      },
+    };
+    const signer = await SignerJsonRpc.new(new ClientPublicTestnet(), {
+      transport,
+    });
+
+    await expect(signer.getIdentity()).resolves.toBe("identity");
+    expect(identityRequests).toBe(1);
+    expect(getResultTimeout).toBe(20_000);
+  });
+
+  it("uses the B retry schedule while result recovery is unavailable", async () => {
+    vi.useFakeTimers();
+    let getResultRequests = 0;
+    const transport: JsonRpcTransport = {
+      async request(payload) {
+        if (payload.method === "get_info") {
+          return response(payload, {
+            type: SignerType.CKB,
+            sign_type: SignerSignType.CkbSecp256k1,
+          });
+        }
+        if (payload.method === "get_result") {
+          getResultRequests += 1;
+          if (getResultRequests < 6) {
+            throw new Error("Unavailable");
+          }
+          return response(payload, {
+            status: "completed",
+            result: "identity",
+          });
+        }
+        throw new Error("Response lost");
+      },
+    };
+
+    try {
+      const signer = await SignerJsonRpc.new(new ClientPublicTestnet(), {
+        transport,
+      });
+      const identity = signer.getIdentity();
+
+      await vi.advanceTimersByTimeAsync(0);
+      expect(getResultRequests).toBe(1);
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(getResultRequests).toBe(2);
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(getResultRequests).toBe(3);
+      await vi.advanceTimersByTimeAsync(4_000);
+      expect(getResultRequests).toBe(4);
+      await vi.advanceTimersByTimeAsync(8_000);
+      expect(getResultRequests).toBe(5);
+      await vi.advanceTimersByTimeAsync(10_000);
+
+      await expect(identity).resolves.toBe("identity");
+      expect(getResultRequests).toBe(6);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
   it("caches successful read-only requests until replacement", async () => {
     const requests = new Map<string, number>();
     let resolveScripts = () => {};
@@ -205,7 +313,7 @@ describe("SignerJsonRpc", () => {
     expect(requests.get("get_identity")).toBe(2);
   });
 
-  it("retries failed read-only requests", async () => {
+  it("clears failed read-only requests after recovery fails", async () => {
     let identityRequests = 0;
     const transport: JsonRpcTransport = {
       async request(payload) {
@@ -214,6 +322,10 @@ describe("SignerJsonRpc", () => {
             type: SignerType.CKB,
             sign_type: SignerSignType.CkbSecp256k1,
           });
+        }
+
+        if (payload.method === "get_result") {
+          return response(payload, { status: "not_found" });
         }
 
         identityRequests += 1;
@@ -227,7 +339,9 @@ describe("SignerJsonRpc", () => {
       transport,
     });
 
-    await expect(signer.getIdentity()).rejects.toThrow("Temporary failure");
+    await expect(signer.getIdentity()).rejects.toThrow(
+      "Signer request result was not found",
+    );
     await expect(signer.getIdentity()).resolves.toBe("identity");
     await expect(signer.getIdentity()).resolves.toBe("identity");
     expect(identityRequests).toBe(2);
