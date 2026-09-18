@@ -81,7 +81,7 @@ export class KhieSignerSession {
   async connectRelay(relayAddress: string) {
     const address = relayAddress.trim();
     const node = this.resources.node;
-    if (!node || !address) {
+    if (!node || !address || this.resources.abortController.signal.aborted) {
       return false;
     }
 
