@@ -18,6 +18,8 @@ jobs:
         with:
           node-version: 26
       - uses: pnpm/action-setup@v6
+        with:
+          cache: true
 
       - name: Install dependencies
         run: pnpm --filter . install --frozen-lockfile
@@ -59,6 +61,8 @@ jobs:
         with:
           node-version: 26
       - uses: pnpm/action-setup@v6
+        with:
+          cache: true
 
       - name: Install dependencies
         run: pnpm --filter . install --frozen-lockfile
