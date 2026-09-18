@@ -4,7 +4,9 @@ import type { PeerId } from "@libp2p/interface";
 import type { KhieNode } from "./node.js";
 
 const DIAL_TIMEOUT_MS = 10_000;
-const RETRY_DELAYS_MS = [0, 5_000, 10_000, 20_000] as const;
+const RETRY_DELAYS_MS = [5_000, 10_000, 20_000] as const;
+const RETRY_REPEAT_MS = 30_000;
+const DIRECT_CONNECTION_ATTEMPTS = 4;
 
 export class KhieConnectionController {
   private readonly listenersController = new AbortController();
@@ -84,43 +86,49 @@ export class KhieConnectionController {
   }
 
   private async reconnect(controller: AbortController) {
-    for (const delay of RETRY_DELAYS_MS) {
-      try {
-        await ccc.sleep(delay, controller.signal);
-      } catch {
-        return;
-      }
+    try {
+      await ccc.retry<void>(
+        RETRY_DELAYS_MS,
+        async ({ index, resolve }) => {
+          await ccc.waitForAvailability(controller.signal);
+          if (this.hasRequiredConnection(index)) {
+            return resolve(undefined);
+          }
 
-      if (this.hasDirectConnection()) {
-        return;
-      }
+          try {
+            await Libp2p.dialKnownAddresses(
+              this.node,
+              this.peerId,
+              ccc.abortSignalAny([
+                controller.signal,
+                AbortSignal.timeout(DIAL_TIMEOUT_MS),
+              ]),
+            );
+          } catch (cause) {
+            if (this.hasRequiredConnection(index)) {
+              return resolve(undefined);
+            }
+            throw cause;
+          }
+          if (this.hasRequiredConnection(index)) {
+            return resolve(undefined);
+          }
 
-      try {
-        await Libp2p.dialKnownAddresses(
-          this.node,
-          this.peerId,
-          ccc.abortSignalAny([
-            controller.signal,
-            AbortSignal.timeout(DIAL_TIMEOUT_MS),
-          ]),
-        );
-        if (this.hasDirectConnection()) {
-          return;
-        }
-      } catch {
-        if (controller.signal.aborted) {
-          return;
-        }
-        if (this.hasDirectConnection()) {
-          return;
-        }
-      }
+          throw new Error("Dial did not establish a connection");
+        },
+        { repeat: RETRY_REPEAT_MS, signal: controller.signal },
+      );
+    } catch {
+      // Exhausting retries and cancellation both end this reconciliation.
     }
   }
 
-  private hasDirectConnection() {
+  private hasRequiredConnection(index: number) {
     return this.node
       .getConnections(this.peerId)
-      .some(({ direct, status }) => direct && status === "open");
+      .some(
+        ({ direct, status }) =>
+          status === "open" && (index >= DIRECT_CONNECTION_ATTEMPTS || direct),
+      );
   }
 }

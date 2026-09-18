@@ -7,7 +7,6 @@ import type {
   Peer,
   PeerId,
 } from "@libp2p/interface";
-import { multiaddr } from "@multiformats/multiaddr";
 
 type BrowserJsonRpcComponents = Libp2p.JsonRpcServiceComponents & {
   pairing: Libp2p.PairingService;
@@ -21,54 +20,6 @@ type KhieSignerServices = {
 type KhieSignerNode = Awaited<ReturnType<typeof createKhieSignerNode>>;
 type KhieSignerJsonRpcHandler = (payload: ccc.JsonRpcPayload) => unknown;
 
-class KhieConnectionAuthorizer {
-  private readonly connections = new Map<
-    string,
-    { status: "connected" } | { status: "connecting" }
-  >();
-
-  async handle(
-    peerId: PeerId,
-    payload: ccc.JsonRpcPayload,
-    handler: KhieSignerJsonRpcHandler,
-  ) {
-    const peer = peerId.toString();
-    // SignerJsonRpc reads metadata before it sends the connect request.
-    if (payload.method === "get_info") {
-      return handler(payload);
-    }
-
-    if (payload.method !== "connect") {
-      if (this.connections.get(peer)?.status !== "connected") {
-        throw new ccc.JsonRpcError({
-          code: -32001,
-          message: "Connect must be approved before this request",
-        });
-      }
-      return handler(payload);
-    }
-
-    const connecting = { status: "connecting" } as const;
-    this.connections.set(peer, connecting);
-    try {
-      const result = await handler(payload);
-      // A later connect attempt or unpair invalidates this completion.
-      if (this.connections.get(peer) === connecting) {
-        this.connections.set(peer, { status: "connected" });
-      }
-      return result;
-    } finally {
-      if (this.connections.get(peer) === connecting) {
-        this.connections.delete(peer);
-      }
-    }
-  }
-
-  unpair(peerId: PeerId) {
-    this.connections.delete(peerId.toString());
-  }
-}
-
 type KhieSignerSessionResources = {
   abortController: AbortController;
   disconnectedAt?: number;
@@ -77,7 +28,7 @@ type KhieSignerSessionResources = {
   pairingController?: AbortController;
   pairedPeer?: PeerId;
   pairedPeerName?: string;
-  relayConnection?: Connection;
+  relayController?: Libp2p.RelayConnectionController;
 };
 
 export type KhieSignerSessionConfig = {
@@ -88,6 +39,7 @@ export type KhieSignerSessionConfig = {
   onPaired?: () => void;
   onRemotePeerChange?: (peer: KhieRemotePeer) => void;
   onReady?: (session: KhieSignerSession) => void;
+  onRelayConnectionChange?: (connected: boolean) => void;
   onUnpaired?: () => void;
   pairedPeerTimeoutMs?: number;
 };
@@ -129,25 +81,32 @@ export class KhieSignerSession {
   async connectRelay(relayAddress: string) {
     const address = relayAddress.trim();
     const node = this.resources.node;
-    if (!node || !address) {
+    if (!node || !address || this.resources.abortController.signal.aborted) {
       return false;
     }
 
-    const previous = this.resources.relayConnection;
-    this.resources.relayConnection = undefined;
-
-    let connection: Connection | undefined;
+    const previous = this.resources.relayController;
+    let controller: Libp2p.RelayConnectionController | undefined;
     try {
-      await previous?.close();
-      connection = await node.dial(multiaddr(address), {
-        signal: this.resources.abortController.signal,
+      controller = new Libp2p.RelayConnectionController(node, [address], {
+        onConnectionChange: (connection) => {
+          if (this.resources.relayController !== controller) {
+            return;
+          }
+          this.events?.onRelayConnectionChange?.(connection !== undefined);
+        },
       });
-      this.resources.abortController.signal.throwIfAborted();
-
-      this.resources.relayConnection = connection;
+      this.resources.relayController = controller;
+      await previous?.stop();
+      await controller.connect();
       return true;
     } catch (cause) {
-      await connection?.close();
+      if (
+        (controller && this.resources.relayController !== controller) ||
+        this.resources.abortController.signal.aborted
+      ) {
+        return false;
+      }
       this.events?.onError?.(asError(cause));
       return false;
     }
@@ -391,7 +350,7 @@ export class KhieSignerSession {
   }
 
   private async releaseResources() {
-    const { abortController, node, nodeSubscriptions, relayConnection } =
+    const { abortController, node, nodeSubscriptions, relayController } =
       this.resources;
     abortController.abort();
     nodeSubscriptions.splice(0).forEach((unsubscribe) => unsubscribe());
@@ -402,7 +361,7 @@ export class KhieSignerSession {
       }
     } finally {
       try {
-        await relayConnection?.close();
+        await relayController?.stop();
       } finally {
         await node?.stop();
       }
@@ -418,8 +377,6 @@ async function createKhieSignerNode(
   signal: AbortSignal,
 ) {
   signal.throwIfAborted();
-  const connectionAuthorizer = new KhieConnectionAuthorizer();
-
   const [
     { noise },
     { yamux },
@@ -467,23 +424,16 @@ async function createKhieSignerNode(
               !isSelectedPeer(request.peerId)
             ) {
               throw new ccc.JsonRpcError({
-                code: -32000,
+                code: ccc.SignerJsonRpcErrorCode.ServerError,
                 message: "Peer is not paired for Khie access",
               });
             }
 
             pairing.refresh(request.peerId);
-            return connectionAuthorizer.handle(
-              request.peerId,
-              request.payload,
-              handler,
-            );
+            return handler(request.payload);
           },
         ),
       },
-    });
-    node.services.pairing.onUnpaired((peerId) => {
-      connectionAuthorizer.unpair(peerId);
     });
     signal.throwIfAborted();
     return node;

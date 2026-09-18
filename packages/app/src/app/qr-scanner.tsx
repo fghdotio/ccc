@@ -5,6 +5,35 @@ import { useEffect, useEffectEvent, useRef } from "react";
 
 const SCAN_INTERVAL_MS = 100;
 
+type BarcodeDetectorLike = {
+  detect(source: CanvasImageSource): Promise<readonly { rawValue: string }[]>;
+};
+
+type BarcodeDetectorConstructor = {
+  new (options: { formats: string[] }): BarcodeDetectorLike;
+  getSupportedFormats?: () => Promise<string[]>;
+};
+
+async function createBarcodeDetector(): Promise<
+  BarcodeDetectorLike | undefined
+> {
+  const BarcodeDetector = Reflect.get(globalThis, "BarcodeDetector") as
+    BarcodeDetectorConstructor | undefined;
+  if (typeof BarcodeDetector !== "function") {
+    return;
+  }
+
+  try {
+    const formats = await BarcodeDetector.getSupportedFormats?.();
+    if (formats && !formats.includes("qr_code")) {
+      return;
+    }
+    return new BarcodeDetector({ formats: ["qr_code"] });
+  } catch {
+    return;
+  }
+}
+
 export type QrScannerProps = {
   ariaLabel?: string;
   className?: string;
@@ -45,7 +74,10 @@ export function QrScanner({
     const start = async () => {
       try {
         assertCameraAvailable();
-        const { QRCanvas, rearCamera } = await import("qr/dom.js");
+        const [{ QRCanvas, rearCamera }, barcodeDetector] = await Promise.all([
+          import("qr/dom.js"),
+          createBarcodeDetector(),
+        ]);
         if (stopped) {
           return;
         }
@@ -65,7 +97,8 @@ export function QrScanner({
         stopScanLoop = startScanning(
           video,
           camera,
-          new QRCanvas(),
+          () => new QRCanvas(),
+          barcodeDetector,
           (value) => {
             stop();
             onScanCurrent(value);
@@ -111,12 +144,14 @@ function assertCameraAvailable() {
 function startScanning(
   video: HTMLVideoElement,
   camera: QRCamera,
-  canvas: QRCanvas,
+  createCanvas: () => QRCanvas,
+  barcodeDetector: BarcodeDetectorLike | undefined,
   onScan: (value: string) => void,
   onError: (error: unknown) => void,
 ) {
   let timeout: ReturnType<typeof setTimeout>;
   let stopped = false;
+  let canvas: QRCanvas | undefined;
 
   const scheduleScan = () => {
     timeout = setTimeout(() => void scan(), SCAN_INTERVAL_MS);
@@ -133,7 +168,21 @@ function startScanning(
     }
 
     try {
-      const value = await camera.readFrame(canvas, true);
+      let value: unknown;
+      if (barcodeDetector) {
+        try {
+          value = (await barcodeDetector.detect(video))[0]?.rawValue;
+        } catch {
+          if (stopped) {
+            return;
+          }
+          // Fall back if the browser exposes an unusable native implementation.
+          barcodeDetector = undefined;
+        }
+      }
+      if (!barcodeDetector) {
+        value = await camera.readFrame((canvas ??= createCanvas()), true);
+      }
       if (stopped) {
         return;
       }

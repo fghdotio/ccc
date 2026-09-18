@@ -36,9 +36,14 @@ type ApprovalPrompt = ccc.SignerJsonRpcConfirmation & {
   signal: AbortSignal;
 };
 type RelayState = "connected" | "connecting" | "failed" | "idle";
+type SignerJsonRpcProviderInfo = {
+  icon?: string;
+  name?: string;
+  signType: ccc.SignerSignType;
+  type: ccc.SignerType;
+};
 
 const PROVIDER_ENDPOINT_URL = "https://app.ckbccc.com/#khie";
-const JSON_RPC_REQUEST_TIMEOUT_MS = 120_000;
 const APPROVAL_ENABLE_DELAY_MS = 1_000;
 const SIGNER_REPLACEMENT_GRACE_MS = 1_000;
 
@@ -81,6 +86,10 @@ export function KhieClientModule({
   const approvalEnabledRef = useRef(false);
   const approvalQueue = useRef<ApprovalPrompt[]>([]);
   const connectedNetworkIdRef = useRef<string>(undefined);
+  const providerSessionInfoRef = useRef<SignerJsonRpcProviderInfo>(undefined);
+  const providerSessionOwnerRef =
+    useRef<ccc.Owner<ccc.SignerJsonRpcProviderSession>>(undefined);
+  const providerSessionSignerRef = useRef<ccc.Signer>(undefined);
   const sessionOwnerRef = useRef<ccc.Owner<KhieSignerSession>>(undefined);
 
   const connectingRelay = relayState === "connecting";
@@ -209,6 +218,32 @@ export function KhieClientModule({
       prompt.resolve(false);
     });
   });
+  const replaceSignerJsonRpcProviderSession = useEffectEvent(() => {
+    const next = ccc.SignerJsonRpcProviderSession.open({
+      connect: (networkId, options) =>
+        connectSigner(
+          networkId,
+          options?.signal ?? new AbortController().signal,
+        ),
+      confirmRequest: (request, options) =>
+        confirmKhieRequest(
+          request,
+          options?.signal ?? new AbortController().signal,
+        ),
+      getSigner: () => signerRef.current,
+      getSignerMetadata,
+    });
+    const previous = providerSessionOwnerRef.current;
+    providerSessionOwnerRef.current = next;
+    providerSessionInfoRef.current = signerJsonRpcProviderInfo(
+      signerRef.current,
+      signerName,
+      signerIcon,
+    );
+    providerSessionSignerRef.current = signerRef.current;
+    connectedNetworkIdRef.current = undefined;
+    void previous?.dispose();
+  });
   const connectDefaultRelay = useEffectEvent(
     async (currentSession: KhieSignerSession) => {
       const address = relayAddress.trim();
@@ -281,7 +316,25 @@ export function KhieClientModule({
   useEffect(() => {
     signerRef.current = signer;
     resolveSignerWaiters(signer, signerWaiters.current);
-  }, [signer]);
+
+    const owner = providerSessionOwnerRef.current;
+    if (!owner || !signer) {
+      return;
+    }
+    const providerSession = owner.value;
+    const info = signerJsonRpcProviderInfo(signer, signerName, signerIcon);
+    if (
+      !signerJsonRpcProviderInfoEquals(providerSessionInfoRef.current, info) ||
+      (providerSession.isConnected &&
+        providerSessionSignerRef.current !== signer)
+    ) {
+      replaceSignerJsonRpcProviderSession();
+      return;
+    }
+
+    providerSessionInfoRef.current = info;
+    providerSessionSignerRef.current = signer;
+  }, [signer, signerIcon, signerName]);
 
   useEffect(() => {
     if (!session || !paired) {
@@ -372,56 +425,26 @@ export function KhieClientModule({
     });
     logCurrent("Starting signer libp2p node");
 
+    replaceSignerJsonRpcProviderSession();
+
     const owner = KhieSignerSession.open({
       endpointUrl: PROVIDER_ENDPOINT_URL,
       handler: async (payload) => {
-        const controller = new AbortController();
-        const { signal } = controller;
-        const reportTimeout = () => {
-          if (!isTimeoutError(signal.reason)) {
-            return;
-          }
-
-          const title = formatRequestTitle(payload.method);
-          showCurrent({
-            label: "REQUEST TIMED OUT",
-            tone: "error",
-            content: <strong>{title} request timed out</strong>,
-          });
-          logCurrent(`${title} request timed out`, "error");
-        };
-        signal.addEventListener("abort", reportTimeout, { once: true });
-        const timeout = setTimeout(
-          () => controller.abort(requestTimeoutError()),
-          JSON_RPC_REQUEST_TIMEOUT_MS,
-        );
-
-        try {
-          const handleRequest = ccc.buildSignerJsonRpcHandler({
-            connect: (networkId) => connectSigner(networkId, signal),
-            confirmRequest: (request) => confirmKhieRequest(request, signal),
-            getSigner: () => signerRef.current,
-            getSignerMetadata,
-          });
-          const result = await handleRequest(payload);
-          signal.throwIfAborted();
-          const completed = formatRequestCompletion(payload.method);
-          if (completed) {
-            showCurrent({
-              label: "REQUEST COMPLETED",
-              tone: "success",
-              content: <strong>{completed}</strong>,
-            });
-            logCurrent(completed, "success");
-          }
-          return result;
-        } catch (cause) {
-          signal.throwIfAborted();
-          throw cause;
-        } finally {
-          clearTimeout(timeout);
-          signal.removeEventListener("abort", reportTimeout);
+        const providerOwner = providerSessionOwnerRef.current;
+        if (!providerOwner) {
+          throw new Error("Signer JSON-RPC provider session is unavailable");
         }
+        const result = await providerOwner.value.handle(payload);
+        const completed = formatRequestCompletion(payload.method);
+        if (completed) {
+          showCurrent({
+            label: "REQUEST COMPLETED",
+            tone: "success",
+            content: <strong>{completed}</strong>,
+          });
+          logCurrent(completed, "success");
+        }
+        return result;
       },
       onEndpointChange: setPairingEndpoint,
       onError: reportCurrentError,
@@ -438,6 +461,9 @@ export function KhieClientModule({
         logCurrent("Khie peer paired", "success");
       },
       onRemotePeerChange: setRemotePeer,
+      onRelayConnectionChange: (connected) => {
+        setRelayState(connected ? "connected" : "connecting");
+      },
       onReady: (session) => {
         setNodeReady(true);
         showCurrent({
@@ -450,7 +476,7 @@ export function KhieClientModule({
         void pairLocationEndpoint(session);
       },
       onUnpaired: () => {
-        connectedNetworkIdRef.current = undefined;
+        replaceSignerJsonRpcProviderSession();
         setPaired(false);
         setRemotePeer(undefined);
         rejectSignerWaiters(
@@ -474,8 +500,12 @@ export function KhieClientModule({
   useEffect(
     () => () => {
       const owner = sessionOwnerRef.current;
+      const providerOwner = providerSessionOwnerRef.current;
       sessionOwnerRef.current = undefined;
-      void owner?.dispose();
+      providerSessionOwnerRef.current = undefined;
+      providerSessionInfoRef.current = undefined;
+      providerSessionSignerRef.current = undefined;
+      void Promise.all([owner?.dispose(), providerOwner?.dispose()]);
     },
     [],
   );
@@ -1253,6 +1283,34 @@ function nextElapsedDurationBoundary(timestamp: number, now: number) {
   return Math.max(1, nextBoundary - now);
 }
 
+function signerJsonRpcProviderInfo(
+  signer: ccc.Signer | undefined,
+  name?: string,
+  icon?: string,
+): SignerJsonRpcProviderInfo | undefined {
+  if (!signer) {
+    return;
+  }
+  return {
+    type: signer.type,
+    signType: signer.signType,
+    name,
+    icon,
+  };
+}
+
+function signerJsonRpcProviderInfoEquals(
+  left: SignerJsonRpcProviderInfo | undefined,
+  right: SignerJsonRpcProviderInfo | undefined,
+) {
+  return (
+    left?.type === right?.type &&
+    left?.signType === right?.signType &&
+    left?.name === right?.name &&
+    left?.icon === right?.icon
+  );
+}
+
 function clientOwnerForNetworkId(networkId: string, current: ccc.Client) {
   if (networkIdFromAddressPrefix(current.addressPrefix) === networkId) {
     return;
@@ -1266,7 +1324,7 @@ function clientOwnerForNetworkId(networkId: string, current: ccc.Client) {
   }
 
   throw new ccc.JsonRpcError({
-    code: -32001,
+    code: ccc.SignerJsonRpcErrorCode.InvalidState,
     message: `Unsupported network ID: ${networkId}`,
   });
 }
@@ -1321,7 +1379,7 @@ function networkIdFromAddressPrefix(addressPrefix: string) {
   }
 
   throw new ccc.JsonRpcError({
-    code: -32001,
+    code: ccc.SignerJsonRpcErrorCode.InvalidState,
     message: `Unsupported address prefix: ${addressPrefix}`,
   });
 }
@@ -1364,16 +1422,6 @@ function abortReason(signal: AbortSignal) {
   const error = new Error("JSON-RPC request canceled");
   error.name = "AbortError";
   return error;
-}
-
-function requestTimeoutError() {
-  const error = new Error("JSON-RPC request timed out");
-  error.name = "TimeoutError";
-  return error;
-}
-
-function isTimeoutError(cause: unknown): cause is Error {
-  return cause instanceof Error && cause.name === "TimeoutError";
 }
 
 function reportError(
