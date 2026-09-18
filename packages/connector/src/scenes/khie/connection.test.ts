@@ -1,6 +1,6 @@
 import type { Connection, PeerId } from "@libp2p/interface";
 import { multiaddr } from "@multiformats/multiaddr";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { KhieConnectionController } from "./connection.js";
 import type { KhieNode } from "./node.js";
 
@@ -48,6 +48,15 @@ function dispatchPeerEvent(target: EventTarget, peerId: PeerId) {
 }
 
 describe("KhieConnectionController", () => {
+  beforeEach(() => {
+    vi.stubGlobal(
+      "document",
+      Object.assign(new EventTarget(), { visibilityState: "visible" }),
+    );
+    vi.stubGlobal("navigator", { onLine: true });
+    vi.stubGlobal("window", new EventTarget());
+  });
+
   afterEach(() => {
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
@@ -67,7 +76,7 @@ describe("KhieConnectionController", () => {
     controller.stop();
   });
 
-  it("retries a disconnected paired peer with bounded backoff", async () => {
+  it("keeps retrying for a disconnected paired peer", async () => {
     vi.useFakeTimers();
     const timeout = vi.spyOn(AbortSignal, "timeout");
     const peerId = testPeerId(PAIRED_PEER_ID);
@@ -89,7 +98,9 @@ describe("KhieConnectionController", () => {
     expect(dial).toHaveBeenCalledTimes(3);
     await vi.advanceTimersByTimeAsync(20_000);
     expect(dial).toHaveBeenCalledTimes(4);
-    expect(timeout).toHaveBeenCalledTimes(4);
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(dial).toHaveBeenCalledTimes(5);
+    expect(timeout).toHaveBeenCalledTimes(5);
     expect(timeout).toHaveBeenCalledWith(10_000);
     for (const [, options] of dial.mock.calls) {
       expect(options).not.toHaveProperty("force");
@@ -177,7 +188,7 @@ describe("KhieConnectionController", () => {
     controller.stop();
   });
 
-  it("retries a direct upgrade while a relayed connection remains open", async () => {
+  it("tries a direct upgrade four times before accepting a relayed connection", async () => {
     vi.useFakeTimers();
     const peerId = testPeerId(PAIRED_PEER_ID);
     const { dial, node } = createNode();
@@ -188,6 +199,12 @@ describe("KhieConnectionController", () => {
 
     await vi.advanceTimersByTimeAsync(5_000);
     expect(dial).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(dial).toHaveBeenCalledTimes(3);
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(dial).toHaveBeenCalledTimes(4);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(dial).toHaveBeenCalledTimes(4);
 
     controller.stop();
   });
@@ -216,6 +233,28 @@ describe("KhieConnectionController", () => {
     documentTarget.dispatchEvent(new Event("visibilitychange"));
     await vi.advanceTimersByTimeAsync(40_000);
     expect(dial).toHaveBeenCalledOnce();
+  });
+
+  it("waits for the page to be online before trusting an open connection", async () => {
+    vi.useFakeTimers();
+    const navigator = { onLine: false };
+    const windowTarget = new EventTarget();
+    vi.stubGlobal("navigator", navigator);
+    vi.stubGlobal("window", windowTarget);
+    const peerId = testPeerId(PAIRED_PEER_ID);
+    const { dial, getConnections, node } = createNode([testConnection(true)]);
+    const controller = new KhieConnectionController(node, peerId);
+
+    await vi.advanceTimersByTimeAsync(40_000);
+    expect(dial).not.toHaveBeenCalled();
+
+    getConnections.mockReturnValue([]);
+    navigator.onLine = true;
+    windowTarget.dispatchEvent(new Event("online"));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(dial).toHaveBeenCalledOnce();
+
+    controller.stop();
   });
 
   it("ignores events for another peer and stops observing", async () => {

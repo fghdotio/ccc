@@ -1,7 +1,6 @@
 import { ccc } from "@ckb-ccc/ccc";
 import { Libp2p } from "@ckb-ccc/libp2p";
-import type { Connection, PeerId } from "@libp2p/interface";
-import { multiaddr } from "@multiformats/multiaddr";
+import type { PeerId } from "@libp2p/interface";
 import type { ConnectorConnection } from "../../events/external.js";
 import { errorMessage } from "../error.js";
 import { KhieConnectionController } from "./connection.js";
@@ -43,7 +42,7 @@ export type KhiePairingSessionConfig = {
 type KhiePairingSessionResources = {
   abortController: AbortController;
   nodeOwner?: ccc.Owner<KhieNode>;
-  relayConnection?: Connection;
+  relayController?: Libp2p.RelayConnectionController;
   nodeSubscriptions: Array<() => void>;
   selectedPeer?: PeerId;
   pendingSigner?: {
@@ -64,11 +63,13 @@ async function releaseResources(resources: KhiePairingSessionResources) {
   try {
     if (resources.pendingSigner) {
       await resources.pendingSigner.cleanup();
-    } else {
-      await resources.relayConnection?.close();
     }
   } finally {
-    await resources.nodeOwner?.dispose();
+    try {
+      await resources.relayController?.stop();
+    } finally {
+      await resources.nodeOwner?.dispose();
+    }
   }
 }
 
@@ -213,29 +214,37 @@ export class KhiePairingSession {
   async connectRelay(relayAddress: string) {
     const resources = this.resources;
     const node = resources?.nodeOwner?.value;
-    if (
-      !node ||
-      !relayAddress ||
-      resources.selectedPeer ||
-      this.currentState.relayState === "connecting"
-    ) {
+    if (!node || !relayAddress || resources.selectedPeer) {
       return;
     }
 
-    this.beginOperation({ relayState: "connecting" });
+    const address = relayAddress.trim();
     const signal = resources.abortController.signal;
+    const previous = resources.relayController;
+    this.beginOperation({ relayState: "connecting" });
+    let controller: Libp2p.RelayConnectionController | undefined;
 
     try {
-      const previous = resources.relayConnection;
-      resources.relayConnection = undefined;
-
-      await previous?.close();
-      const connection = await node.dial(multiaddr(relayAddress), { signal });
-      signal.throwIfAborted();
-
-      resources.relayConnection = connection;
-      this.update({ relayState: "connected" });
+      controller = new Libp2p.RelayConnectionController(node, [address], {
+        onConnectionChange: (connection) => {
+          if (resources.relayController !== controller) {
+            return;
+          }
+          this.update({
+            relayState: connection ? "connected" : "connecting",
+          });
+        },
+      });
+      resources.relayController = controller;
+      await previous?.stop();
+      await controller.connect();
     } catch (cause) {
+      if (
+        (controller && resources.relayController !== controller) ||
+        signal.aborted
+      ) {
+        return;
+      }
       this.updateError(cause, { relayState: "failed" });
     }
   }
@@ -293,12 +302,7 @@ export class KhiePairingSession {
       return;
     }
 
-    const cleanup = this.createPairingCleanup(
-      node,
-      peerId,
-      signer,
-      resources.relayConnection,
-    );
+    const cleanup = this.createPairingCleanup(node, peerId, signer);
     resources.pendingSigner = { cleanup, signer };
     await this.connectSigner();
   }
@@ -307,18 +311,13 @@ export class KhiePairingSession {
     node: KhieNode,
     peerId: PeerId,
     signer: ccc.SignerJsonRpc,
-    relayConnection?: Connection,
   ) {
     let unsubscribeUnpaired = () => {};
 
     const cleanup = async () => {
       unsubscribeUnpaired();
 
-      try {
-        await node.services.pairing.unpair(peerId);
-      } finally {
-        await relayConnection?.close();
-      }
+      await node.services.pairing.unpair(peerId);
     };
 
     unsubscribeUnpaired = node.services.pairing.onUnpaired((unpairedPeer) => {
@@ -364,6 +363,7 @@ export class KhiePairingSession {
 
       removeNodeSubscriptions(resources);
       const abortController = resources.abortController;
+      const relayController = resources.relayController;
       const nodeOwnership = nodeOwner.map((node) => node);
       const connectionController = new KhieConnectionController(
         nodeOwnership.value,
@@ -377,7 +377,11 @@ export class KhiePairingSession {
           try {
             await cleanup();
           } finally {
-            await nodeOwnership.dispose();
+            try {
+              await relayController?.stop();
+            } finally {
+              await nodeOwnership.dispose();
+            }
           }
         },
       );

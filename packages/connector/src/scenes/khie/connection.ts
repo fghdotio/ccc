@@ -5,6 +5,8 @@ import type { KhieNode } from "./node.js";
 
 const DIAL_TIMEOUT_MS = 10_000;
 const RETRY_DELAYS_MS = [5_000, 10_000, 20_000] as const;
+const RETRY_REPEAT_MS = 30_000;
+const DIRECT_CONNECTION_ATTEMPTS = 4;
 
 export class KhieConnectionController {
   private readonly listenersController = new AbortController();
@@ -87,8 +89,9 @@ export class KhieConnectionController {
     try {
       await ccc.retry<void>(
         RETRY_DELAYS_MS,
-        async (resolve) => {
-          if (this.hasDirectConnection()) {
+        async ({ index, resolve }) => {
+          await ccc.waitForAvailability(controller.signal);
+          if (this.hasRequiredConnection(index)) {
             return resolve(undefined);
           }
 
@@ -102,25 +105,30 @@ export class KhieConnectionController {
               ]),
             );
           } catch (cause) {
-            if (this.hasDirectConnection()) {
+            if (this.hasRequiredConnection(index)) {
               return resolve(undefined);
             }
             throw cause;
           }
-          if (this.hasDirectConnection()) return resolve(undefined);
+          if (this.hasRequiredConnection(index)) {
+            return resolve(undefined);
+          }
 
-          throw new Error("Dial did not establish a direct connection");
+          throw new Error("Dial did not establish a connection");
         },
-        { signal: controller.signal },
+        { repeat: RETRY_REPEAT_MS, signal: controller.signal },
       );
     } catch {
       // Exhausting retries and cancellation both end this reconciliation.
     }
   }
 
-  private hasDirectConnection() {
+  private hasRequiredConnection(index: number) {
     return this.node
       .getConnections(this.peerId)
-      .some(({ direct, status }) => direct && status === "open");
+      .some(
+        ({ direct, status }) =>
+          status === "open" && (index >= DIRECT_CONNECTION_ATTEMPTS || direct),
+      );
   }
 }

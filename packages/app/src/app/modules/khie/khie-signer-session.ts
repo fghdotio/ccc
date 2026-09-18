@@ -7,7 +7,6 @@ import type {
   Peer,
   PeerId,
 } from "@libp2p/interface";
-import { multiaddr } from "@multiformats/multiaddr";
 
 type BrowserJsonRpcComponents = Libp2p.JsonRpcServiceComponents & {
   pairing: Libp2p.PairingService;
@@ -29,7 +28,7 @@ type KhieSignerSessionResources = {
   pairingController?: AbortController;
   pairedPeer?: PeerId;
   pairedPeerName?: string;
-  relayConnection?: Connection;
+  relayController?: Libp2p.RelayConnectionController;
 };
 
 export type KhieSignerSessionConfig = {
@@ -40,6 +39,7 @@ export type KhieSignerSessionConfig = {
   onPaired?: () => void;
   onRemotePeerChange?: (peer: KhieRemotePeer) => void;
   onReady?: (session: KhieSignerSession) => void;
+  onRelayConnectionChange?: (connected: boolean) => void;
   onUnpaired?: () => void;
   pairedPeerTimeoutMs?: number;
 };
@@ -85,21 +85,28 @@ export class KhieSignerSession {
       return false;
     }
 
-    const previous = this.resources.relayConnection;
-    this.resources.relayConnection = undefined;
-
-    let connection: Connection | undefined;
+    const previous = this.resources.relayController;
+    let controller: Libp2p.RelayConnectionController | undefined;
     try {
-      await previous?.close();
-      connection = await node.dial(multiaddr(address), {
-        signal: this.resources.abortController.signal,
+      controller = new Libp2p.RelayConnectionController(node, [address], {
+        onConnectionChange: (connection) => {
+          if (this.resources.relayController !== controller) {
+            return;
+          }
+          this.events?.onRelayConnectionChange?.(connection !== undefined);
+        },
       });
-      this.resources.abortController.signal.throwIfAborted();
-
-      this.resources.relayConnection = connection;
+      this.resources.relayController = controller;
+      await previous?.stop();
+      await controller.connect();
       return true;
     } catch (cause) {
-      await connection?.close();
+      if (
+        (controller && this.resources.relayController !== controller) ||
+        this.resources.abortController.signal.aborted
+      ) {
+        return false;
+      }
       this.events?.onError?.(asError(cause));
       return false;
     }
@@ -343,7 +350,7 @@ export class KhieSignerSession {
   }
 
   private async releaseResources() {
-    const { abortController, node, nodeSubscriptions, relayConnection } =
+    const { abortController, node, nodeSubscriptions, relayController } =
       this.resources;
     abortController.abort();
     nodeSubscriptions.splice(0).forEach((unsubscribe) => unsubscribe());
@@ -354,7 +361,7 @@ export class KhieSignerSession {
       }
     } finally {
       try {
-        await relayConnection?.close();
+        await relayController?.stop();
       } finally {
         await node?.stop();
       }

@@ -461,6 +461,9 @@ export function KhieClientModule({
         logCurrent("Khie peer paired", "success");
       },
       onRemotePeerChange: setRemotePeer,
+      onRelayConnectionChange: (connected) => {
+        setRelayState(connected ? "connected" : "connecting");
+      },
       onReady: (session) => {
         setNodeReady(true);
         showCurrent({
