@@ -15,6 +15,7 @@ const sessionOwners: ReturnType<typeof SignerJsonRpcProviderSession.open>[] =
 
 afterEach(async () => {
   await Promise.all(sessionOwners.splice(0).map((owner) => owner.dispose()));
+  vi.useRealTimers();
 });
 
 function payload(
@@ -245,6 +246,56 @@ describe("SignerJsonRpcProviderSession", () => {
         message: "Request ID already exists",
       }),
     );
+  });
+
+  it("retains completed results after the guaranteed cache period", async () => {
+    vi.useFakeTimers();
+    const signer = mockSigner({
+      getIdentity: vi.fn(async () => "identity"),
+    });
+    const session = createSession(signer);
+    const sessionId = await getSessionId(session);
+    await connect(session, sessionId);
+
+    await session.handle(
+      payload("get_identity", [], "retained-request", sessionId),
+    );
+    await vi.advanceTimersByTimeAsync(120_000);
+
+    await expect(
+      session.handle(payload("get_result", [], "retained-request", sessionId)),
+    ).resolves.toEqual({ status: "completed", result: "identity" });
+  });
+
+  it("evicts retrieved history before unretrieved history", async () => {
+    vi.useFakeTimers();
+    const signer = mockSigner({
+      getIdentity: vi.fn(async () => "identity"),
+    });
+    const session = createSession(signer);
+    const sessionId = await getSessionId(session);
+    await connect(session, sessionId);
+
+    await session.handle(
+      payload("get_identity", [], "retrieved-request", sessionId),
+    );
+    await session.handle(
+      payload("get_result", [], "retrieved-request", sessionId),
+    );
+
+    for (let i = 0; i < 126; i++) {
+      await session.handle(
+        payload("get_identity", [], `unretrieved-${i}`, sessionId),
+      );
+    }
+    await vi.advanceTimersByTimeAsync(120_000);
+
+    await expect(
+      session.handle(payload("get_result", [], "retrieved-request", sessionId)),
+    ).resolves.toEqual({ status: "not_found" });
+    await expect(
+      session.handle(payload("get_result", [], "unretrieved-0", sessionId)),
+    ).resolves.toEqual({ status: "completed", result: "identity" });
   });
 
   it("caches and rethrows the original error object", async () => {

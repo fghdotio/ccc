@@ -20,8 +20,14 @@ export type SignerJsonRpcConfirmation =
   | { method: "sign_transaction"; transaction: Transaction };
 
 const GET_RESULT_CACHE_MS = 120_000;
+const GET_RESULT_HISTORY_CAPACITY = 128;
 const GET_RESULT_WAIT_MS = 10_000;
 const GET_RESULT_PENDING_RESULT = Symbol("pending");
+
+type SignerJsonRpcResultEntry = {
+  completion: Promise<unknown>;
+  retrieved: boolean;
+};
 
 export enum SignerJsonRpcErrorCode {
   MethodNotFound = -32601,
@@ -58,7 +64,8 @@ export type SignerJsonRpcProviderSessionConfig = {
 export class SignerJsonRpcProviderSession {
   private readonly abortController = new AbortController();
   private readonly id = hexFrom(randomBytes(16));
-  private readonly resultRecords = new Map<string, Promise<unknown>>();
+  private readonly resultRecords = new Map<string, SignerJsonRpcResultEntry>();
+  private readonly resultHistory = new Map<string, SignerJsonRpcResultEntry>();
   private readonly handlers;
   private info?: SignerJsonRpcInfoPayload;
   private connected = false;
@@ -214,11 +221,18 @@ export class SignerJsonRpcProviderSession {
       requireParams(payload, 2);
       requireRequestId(targetRequestId);
       this.requireSession(sessionId);
-      return this.getResult(this.resultRecords.get(targetRequestId), signal);
+      return this.getResult(
+        this.resultRecords.get(targetRequestId) ??
+          this.resultHistory.get(targetRequestId),
+        signal,
+      );
     }
 
     requireRequestId(requestId);
-    if (this.resultRecords.has(requestId)) {
+    if (
+      this.resultRecords.has(requestId) ||
+      this.resultHistory.has(requestId)
+    ) {
       throw new JsonRpcError({
         code: SignerJsonRpcErrorCode.DuplicateRequestId,
         message: "Request ID already exists",
@@ -264,6 +278,7 @@ export class SignerJsonRpcProviderSession {
   private dispose() {
     this.connected = false;
     this.resultRecords.clear();
+    this.resultHistory.clear();
     this.abortController.abort(
       new JsonRpcError({
         code: SignerJsonRpcErrorCode.InvalidSession,
@@ -310,11 +325,14 @@ export class SignerJsonRpcProviderSession {
 
   private executeRequest(requestId: string, request: () => unknown) {
     const completion = Promise.resolve().then(request);
-    this.resultRecords.set(requestId, completion);
+    const entry = { completion, retrieved: false };
+    this.resultRecords.set(requestId, entry);
     const expire = () => {
       setTimeout(() => {
-        if (this.resultRecords.get(requestId) === completion) {
+        if (this.resultRecords.get(requestId) === entry) {
           this.resultRecords.delete(requestId);
+          this.resultHistory.set(requestId, entry);
+          this.trimResultHistory();
         }
       }, GET_RESULT_CACHE_MS);
     };
@@ -322,16 +340,37 @@ export class SignerJsonRpcProviderSession {
     return completion;
   }
 
+  private trimResultHistory() {
+    while (this.resultHistory.size > GET_RESULT_HISTORY_CAPACITY) {
+      let oldestRetrieved: string | undefined;
+      for (const [requestId, entry] of this.resultHistory) {
+        if (entry.retrieved) {
+          oldestRetrieved = requestId;
+          break;
+        }
+      }
+
+      this.resultHistory.delete(
+        oldestRetrieved ?? this.resultHistory.keys().next().value!,
+      );
+    }
+  }
+
   private async getResult(
-    completion: Promise<unknown> | undefined,
+    entry: SignerJsonRpcResultEntry | undefined,
     signal?: AbortSignal,
   ): Promise<SignerJsonRpcResultRecord> {
-    if (!completion) return { status: "not_found" };
+    if (!entry) {
+      return { status: "not_found" };
+    }
 
     const controller = new AbortController();
     try {
       const result = await Promise.race([
-        completion,
+        entry.completion.then(
+          (value) => ({ status: "fulfilled" as const, value }),
+          (reason: unknown) => ({ status: "rejected" as const, reason }),
+        ),
         sleep(
           GET_RESULT_WAIT_MS,
           signal
@@ -341,9 +380,15 @@ export class SignerJsonRpcProviderSession {
           (): typeof GET_RESULT_PENDING_RESULT => GET_RESULT_PENDING_RESULT,
         ),
       ]);
-      return result === GET_RESULT_PENDING_RESULT
-        ? { status: "pending" }
-        : { status: "completed", result };
+      if (result === GET_RESULT_PENDING_RESULT) {
+        return { status: "pending" };
+      }
+
+      entry.retrieved = true;
+      if (result.status === "rejected") {
+        throw result.reason;
+      }
+      return { status: "completed", result: result.value };
     } finally {
       controller.abort();
     }
