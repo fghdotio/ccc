@@ -203,6 +203,8 @@ export class RequestorJsonRpc {
           : -1;
         if (index !== -1) {
           this.pending.splice(index, 1);
+        } else {
+          this.pending.shift()?.();
         }
         throw cause;
       }
