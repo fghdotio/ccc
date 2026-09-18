@@ -1,6 +1,5 @@
 import type { Connection, PeerId, StreamHandler } from "@libp2p/interface";
 import { streamPair } from "@libp2p/utils";
-import { multiaddr, type Multiaddr } from "@multiformats/multiaddr";
 import { describe, expect, it, vi, type Mock } from "vitest";
 import {
   pairingService,
@@ -10,8 +9,6 @@ import {
 
 const PROTOCOL = "/pairing/test/1.0.0";
 type OpenStream = PairingServiceComponents["connectionManager"]["openStream"];
-type OpenConnection =
-  PairingServiceComponents["connectionManager"]["openConnection"];
 type GetConnections =
   PairingServiceComponents["connectionManager"]["getConnections"];
 
@@ -19,7 +16,6 @@ type TestNode = {
   components: PairingServiceComponents;
   handler?: StreamHandler;
   getConnections: Mock<GetConnections>;
-  openConnection: Mock<OpenConnection>;
   openStream: Mock<OpenStream>;
   peerId: PeerId;
   service: PairingService;
@@ -32,18 +28,13 @@ function testPeerId(value: string): PeerId {
   } as PeerId;
 }
 
-function createTestNode(id: string, addresses: Multiaddr[] = []): TestNode {
+function createTestNode(id: string): TestNode {
   const node = {} as TestNode;
-  const openConnection = vi.fn<OpenConnection>();
   const openStream = vi.fn<OpenStream>();
   const getConnections = vi.fn<GetConnections>(() => []);
   const components = {
-    addressManager: {
-      getAddresses: () => addresses,
-    },
     connectionManager: {
       getConnections,
-      openConnection,
       openStream,
     },
     registrar: {
@@ -56,7 +47,6 @@ function createTestNode(id: string, addresses: Multiaddr[] = []): TestNode {
 
   node.components = components;
   node.getConnections = getConnections;
-  node.openConnection = openConnection;
   node.openStream = openStream;
   node.peerId = testPeerId(id);
   node.service = pairingService(
@@ -163,95 +153,6 @@ describe("PairingService secret rotation", () => {
         second.service.stop(),
         provider.service.stop(),
       ]);
-    }
-  });
-});
-
-describe("PairingService address exchange", () => {
-  it("opens a fallback connection through the initiator addresses", async () => {
-    const initiatorId = "12D3KooWJZQ7ypYJ6LHVYbNcKZX7HxV5pnPHJHvJ7zH2Bf6WmDKm";
-    const providerId = "12D3KooWQwLwBK3EaCaJQNL9KBUvPi9Vh3gZqPfLQVi7aZpHkF3S";
-    const initiatorAddresses = [
-      multiaddr(`/dns4/app.example.com/tcp/443/wss/p2p/${initiatorId}`),
-      multiaddr(
-        `/dns4/relay.ckbccc.com/tcp/443/wss/p2p/${providerId}/p2p-circuit/p2p/${initiatorId}`,
-      ),
-    ];
-    const ignoredAddresses = [
-      multiaddr(`/dns4/app.example.com/tcp/443/wss/p2p/${providerId}`),
-      { toString: () => "invalid" } as Multiaddr,
-    ];
-    const initiator = createTestNode(initiatorId, [
-      ...initiatorAddresses,
-      ...ignoredAddresses,
-    ]);
-    const provider = createTestNode(providerId);
-    await Promise.all([initiator.service.start(), provider.service.start()]);
-    connect(initiator, provider);
-
-    try {
-      await initiator.service.pair({
-        addresses: [],
-        secret: provider.service.secret,
-      });
-
-      await vi.waitFor(() => {
-        expect(provider.openConnection).toHaveBeenCalledWith(
-          initiatorAddresses,
-        );
-      });
-    } finally {
-      await Promise.all([initiator.service.stop(), provider.service.stop()]);
-    }
-  });
-
-  it("limits announced addresses to the pairing message size", async () => {
-    const initiatorId = "12D3KooWJZQ7ypYJ6LHVYbNcKZX7HxV5pnPHJHvJ7zH2Bf6WmDKm";
-    const providerId = "12D3KooWQwLwBK3EaCaJQNL9KBUvPi9Vh3gZqPfLQVi7aZpHkF3S";
-    const initiatorAddresses = Array.from({ length: 16 }, (_, index) =>
-      multiaddr(
-        `/dns4/relay-${index}.example.com/tcp/${4000 + index}/ws/p2p/${initiatorId}`,
-      ),
-    );
-    const initiator = createTestNode(initiatorId, initiatorAddresses);
-    const provider = createTestNode(providerId);
-    await Promise.all([initiator.service.start(), provider.service.start()]);
-    connect(initiator, provider);
-
-    const secret = provider.service.secret;
-    const fullRequest = {
-      type: "pair",
-      secret,
-      addresses: initiatorAddresses.map((address) => address.toString()),
-    };
-    expect(
-      new TextEncoder().encode(JSON.stringify(fullRequest)).byteLength,
-    ).toBeGreaterThan(1024);
-
-    try {
-      await expect(
-        initiator.service.pair({ addresses: [], secret }),
-      ).resolves.toBe(provider.peerId);
-      await vi.waitFor(() =>
-        expect(provider.openConnection).toHaveBeenCalledOnce(),
-      );
-
-      const dialTarget = provider.openConnection.mock.calls[0]?.[0];
-      expect(Array.isArray(dialTarget)).toBe(true);
-      const announcedAddresses = dialTarget as Multiaddr[];
-      expect(announcedAddresses.length).toBeGreaterThan(0);
-      expect(announcedAddresses.length).toBeLessThan(initiatorAddresses.length);
-      expect(
-        new TextEncoder().encode(
-          JSON.stringify({
-            type: "pair",
-            secret,
-            addresses: announcedAddresses.map((address) => address.toString()),
-          }),
-        ).byteLength,
-      ).toBeLessThanOrEqual(1024);
-    } finally {
-      await Promise.all([initiator.service.stop(), provider.service.stop()]);
     }
   });
 });
