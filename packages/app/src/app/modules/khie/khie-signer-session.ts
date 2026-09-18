@@ -401,10 +401,6 @@ async function createKhieSignerNode(
   try {
     node = await createLibp2p<KhieSignerServices>({
       addresses: { listen: ["/p2p-circuit", "/webrtc"] },
-      peerStore: {
-        // Khie nodes are session-scoped; retain learned addresses for reconnects.
-        maxAddressAge: Infinity,
-      },
       transports: [webSockets(), webRTC(), circuitRelayTransport()],
       connectionEncrypters: [noise()],
       streamMuxers: [yamux()],
