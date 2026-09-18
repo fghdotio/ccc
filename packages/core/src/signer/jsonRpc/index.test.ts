@@ -187,8 +187,10 @@ describe("SignerJsonRpc", () => {
     ]);
   });
 
-  it("recovers a lost response without replaying the original request", async () => {
-    let identityRequestId: unknown;
+  it("retries a lost response with the same request ID before recovery", async () => {
+    vi.useFakeTimers();
+    const identityRequestIds: string[] = [];
+    const requestTimeouts: Array<number | undefined> = [];
     let identityRequests = 0;
     let getResultTimeout: number | undefined;
     const transport: JsonRpcTransport = {
@@ -198,28 +200,130 @@ describe("SignerJsonRpc", () => {
         }
         if (payload.method === "get_result") {
           getResultTimeout = options?.timeout;
-          expect(payload.params).toEqual([
-            { session_id: SESSION_ID },
-            identityRequestId,
-          ]);
+          expect(payload.params).toEqual([{}, identityRequestIds[0]]);
           return response(payload, {
             status: "completed",
             result: "identity",
           });
         }
         identityRequests += 1;
+        requestTimeouts.push(options?.timeout);
         const [metadata] = payload.params as [{ request_id: string }];
-        identityRequestId = metadata.request_id;
+        identityRequestIds.push(metadata.request_id);
         throw new Error("Response lost");
       },
     };
-    const signer = await SignerJsonRpc.new(new ClientPublicTestnet(), {
-      transport,
-    });
+    try {
+      const signer = await SignerJsonRpc.new(new ClientPublicTestnet(), {
+        transport,
+      });
+      const identity = signer.getIdentity();
 
-    await expect(signer.getIdentity()).resolves.toBe("identity");
-    expect(identityRequests).toBe(1);
-    expect(getResultTimeout).toBe(20_000);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(identityRequests).toBe(1);
+      await vi.advanceTimersByTimeAsync(4_999);
+      expect(identityRequests).toBe(1);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(identityRequests).toBe(2);
+      await vi.advanceTimersByTimeAsync(9_999);
+      expect(identityRequests).toBe(2);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(identityRequests).toBe(3);
+      await vi.advanceTimersByTimeAsync(19_999);
+      expect(identityRequests).toBe(3);
+      await vi.advanceTimersByTimeAsync(1);
+
+      await expect(identity).resolves.toBe("identity");
+      expect(identityRequests).toBe(4);
+      expect(new Set(identityRequestIds).size).toBe(1);
+      expect(requestTimeouts).toEqual([10_000, 10_000, 10_000, 10_000]);
+      expect(getResultTimeout).toBe(20_000);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("recovers after a retried request reports a duplicate ID", async () => {
+    vi.useFakeTimers();
+    let identityRequestId: string | undefined;
+    let identityRequests = 0;
+    const transport: JsonRpcTransport = {
+      async request(payload) {
+        if (payload.method === "get_info") {
+          return response(payload, infoResult());
+        }
+        if (payload.method === "get_result") {
+          expect(payload.params).toEqual([{}, identityRequestId]);
+          return response(payload, {
+            status: "completed",
+            result: "identity",
+          });
+        }
+
+        const [metadata] = payload.params as [{ request_id: string }];
+        identityRequests += 1;
+        if (identityRequestId) {
+          expect(metadata.request_id).toBe(identityRequestId);
+        }
+        identityRequestId = metadata.request_id;
+        if (identityRequests === 1) {
+          throw new Error("Response lost");
+        }
+        return {
+          jsonrpc: "2.0",
+          id: payload.id,
+          error: {
+            code: SignerJsonRpcErrorCode.DuplicateRequestId,
+            message: "Request ID already exists",
+          },
+        };
+      },
+    };
+    try {
+      const signer = await SignerJsonRpc.new(new ClientPublicTestnet(), {
+        transport,
+      });
+      const identity = signer.getIdentity();
+
+      await vi.advanceTimersByTimeAsync(5_000);
+
+      await expect(identity).resolves.toBe("identity");
+      expect(identityRequests).toBe(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("recovers signer info without a session ID", async () => {
+    vi.useFakeTimers();
+    let getInfoRequestId: string | undefined;
+    const transport: JsonRpcTransport = {
+      async request(payload) {
+        if (payload.method === "get_info") {
+          const [metadata] = payload.params as [{ request_id: string }];
+          getInfoRequestId = metadata.request_id;
+          throw new Error("Response lost");
+        }
+        expect(payload.method).toBe("get_result");
+        expect(payload.params).toEqual([{}, getInfoRequestId]);
+        return response(payload, {
+          status: "completed",
+          result: infoResult({ name: "Recovered wallet" }),
+        });
+      },
+    };
+
+    try {
+      const signerPromise = SignerJsonRpc.new(new ClientPublicTestnet(), {
+        transport,
+      });
+      await vi.advanceTimersByTimeAsync(35_000);
+      const signer = await signerPromise;
+
+      expect(signer.name).toBe("Recovered wallet");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("uses the B retry schedule while result recovery is unavailable", async () => {
@@ -250,7 +354,7 @@ describe("SignerJsonRpc", () => {
       });
       const identity = signer.getIdentity();
 
-      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(35_000);
       expect(getResultRequests).toBe(1);
       await vi.advanceTimersByTimeAsync(1_000);
       expect(getResultRequests).toBe(2);
@@ -269,7 +373,95 @@ describe("SignerJsonRpc", () => {
     }
   });
 
+  it("stops request retries when replaced", async () => {
+    vi.useFakeTimers();
+    let identityRequests = 0;
+    let getResultRequests = 0;
+    const transport: JsonRpcTransport = {
+      async request(payload) {
+        if (payload.method === "get_info") {
+          return response(payload, infoResult());
+        }
+        if (payload.method === "get_result") {
+          getResultRequests += 1;
+        } else {
+          identityRequests += 1;
+        }
+        throw new Error("Unavailable");
+      },
+    };
+
+    try {
+      const signer = await SignerJsonRpc.new(new ClientPublicTestnet(), {
+        transport,
+      });
+      const identity = signer.getIdentity();
+      const identityError = expect(identity).rejects.toThrow(
+        "Signer JSON-RPC was replaced",
+      );
+      await vi.advanceTimersByTimeAsync(0);
+      expect(identityRequests).toBe(1);
+
+      signer.replace();
+
+      await identityError;
+      await vi.advanceTimersByTimeAsync(35_000);
+      expect(identityRequests).toBe(1);
+      expect(getResultRequests).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("stops result recovery when replaced", async () => {
+    let getResultRequests = 0;
+    let recoverySignal: AbortSignal | undefined;
+    const transport: JsonRpcTransport = {
+      async request(payload, options) {
+        if (payload.method === "get_info") {
+          return response(payload, infoResult());
+        }
+        if (payload.method !== "get_result") {
+          return {
+            jsonrpc: "2.0",
+            id: payload.id,
+            error: {
+              code: SignerJsonRpcErrorCode.DuplicateRequestId,
+              message: "Request ID already exists",
+            },
+          };
+        }
+
+        getResultRequests += 1;
+        recoverySignal = options?.signal;
+        return new Promise<JsonRpcResponse>((_resolve, reject) => {
+          recoverySignal?.throwIfAborted();
+          recoverySignal?.addEventListener(
+            "abort",
+            () => reject(recoverySignal?.reason),
+            { once: true },
+          );
+        });
+      },
+    };
+    const signer = await SignerJsonRpc.new(new ClientPublicTestnet(), {
+      transport,
+    });
+    const identity = signer.getIdentity();
+    const identityError = expect(identity).rejects.toThrow(
+      "Signer JSON-RPC was replaced",
+    );
+    await vi.waitFor(() => expect(getResultRequests).toBe(1));
+
+    signer.replace();
+
+    await identityError;
+    expect(recoverySignal?.aborted).toBe(true);
+    expect(getResultRequests).toBe(1);
+  });
+
   it("replaces itself when a request reports an expired session", async () => {
+    let identityRequests = 0;
     const transport: JsonRpcTransport = {
       async request(payload) {
         if (payload.method === "get_info") {
@@ -278,6 +470,7 @@ describe("SignerJsonRpc", () => {
         if (payload.method === "connect") {
           return response(payload, null);
         }
+        identityRequests += 1;
         return {
           jsonrpc: "2.0",
           id: payload.id,
@@ -299,10 +492,12 @@ describe("SignerJsonRpc", () => {
       code: SignerJsonRpcErrorCode.InvalidSession,
     });
     expect(replaced).toHaveBeenCalledOnce();
+    expect(identityRequests).toBe(1);
     await expect(signer.isConnected()).resolves.toBe(false);
   });
 
   it("replaces itself when result recovery reports an expired session", async () => {
+    vi.useFakeTimers();
     const transport: JsonRpcTransport = {
       async request(payload) {
         if (payload.method === "get_info") {
@@ -321,16 +516,24 @@ describe("SignerJsonRpc", () => {
         throw new Error("Response lost");
       },
     };
-    const signer = await SignerJsonRpc.new(new ClientPublicTestnet(), {
-      transport,
-    });
-    const replaced = vi.fn();
-    signer.onReplaced(replaced);
+    try {
+      const signer = await SignerJsonRpc.new(new ClientPublicTestnet(), {
+        transport,
+      });
+      const replaced = vi.fn();
+      signer.onReplaced(replaced);
+      const identity = signer.getIdentity();
+      const identityError = expect(identity).rejects.toMatchObject({
+        code: SignerJsonRpcErrorCode.InvalidSession,
+      });
 
-    await expect(signer.getIdentity()).rejects.toMatchObject({
-      code: SignerJsonRpcErrorCode.InvalidSession,
-    });
-    expect(replaced).toHaveBeenCalledOnce();
+      await vi.advanceTimersByTimeAsync(35_000);
+
+      await identityError;
+      expect(replaced).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("caches successful read-only requests until replacement", async () => {
@@ -403,7 +606,9 @@ describe("SignerJsonRpc", () => {
   });
 
   it("clears failed read-only requests after recovery fails", async () => {
+    vi.useFakeTimers();
     let identityRequests = 0;
+    const requestError = new Error("Temporary failure");
     const transport: JsonRpcTransport = {
       async request(payload) {
         if (payload.method === "get_info") {
@@ -415,22 +620,28 @@ describe("SignerJsonRpc", () => {
         }
 
         identityRequests += 1;
-        if (identityRequests === 1) {
-          throw new Error("Temporary failure");
+        if (identityRequests <= 4) {
+          throw requestError;
         }
         return response(payload, "identity");
       },
     };
-    const signer = await SignerJsonRpc.new(new ClientPublicTestnet(), {
-      transport,
-    });
+    try {
+      const signer = await SignerJsonRpc.new(new ClientPublicTestnet(), {
+        transport,
+      });
+      const firstIdentity = signer.getIdentity();
+      const firstIdentityError =
+        expect(firstIdentity).rejects.toBe(requestError);
+      await vi.advanceTimersByTimeAsync(35_000);
 
-    await expect(signer.getIdentity()).rejects.toThrow(
-      "Signer request result was not found",
-    );
-    await expect(signer.getIdentity()).resolves.toBe("identity");
-    await expect(signer.getIdentity()).resolves.toBe("identity");
-    expect(identityRequests).toBe(2);
+      await firstIdentityError;
+      await expect(signer.getIdentity()).resolves.toBe("identity");
+      await expect(signer.getIdentity()).resolves.toBe("identity");
+      expect(identityRequests).toBe(5);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("runs disconnect cleanup before notifying replacement", async () => {

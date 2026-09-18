@@ -40,7 +40,10 @@ export enum SignerJsonRpcErrorCode {
   DuplicateRequestId = -32005,
 }
 
-export type SignerJsonRpcProviderSessionOptions = { signal?: AbortSignal };
+export type SignerJsonRpcProviderSessionOptions = {
+  /** Aborts when the provider session is disposed. */
+  signal?: AbortSignal;
+};
 
 export type SignerJsonRpcResultRecord =
   | { status: "not_found" }
@@ -204,13 +207,8 @@ export class SignerJsonRpcProviderSession {
     return this.connected;
   }
 
-  handle = (
-    payload: JsonRpcPayload,
-    options?: SignerJsonRpcProviderSessionOptions,
-  ) => {
-    const signal = options?.signal
-      ? abortSignalAny([options.signal, this.abortController.signal])
-      : this.abortController.signal;
+  handle = (payload: JsonRpcPayload) => {
+    const signal = this.abortController.signal;
     signal.throwIfAborted();
 
     const [metadata, ...params] = requireParams(payload);
@@ -220,7 +218,6 @@ export class SignerJsonRpcProviderSession {
       const [targetRequestId] = params;
       requireParams(payload, 2);
       requireRequestId(targetRequestId);
-      this.requireSession(sessionId);
       return this.getResult(
         this.resultRecords.get(targetRequestId) ??
           this.resultHistory.get(targetRequestId),

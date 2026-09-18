@@ -31,7 +31,9 @@ function payload(
     params: [
       {
         ...(method !== "get_result" ? { request_id: requestId } : {}),
-        ...(sessionId ? { session_id: sessionId } : {}),
+        ...(method !== "get_result" && sessionId
+          ? { session_id: sessionId }
+          : {}),
       },
       ...(method === "get_result" ? [requestId] : params),
     ],
@@ -215,16 +217,14 @@ describe("SignerJsonRpcProviderSession", () => {
     expect(signMessageRaw).not.toHaveBeenCalled();
   });
 
-  it("requires a session ID when querying results", async () => {
+  it("queries get_info results without a session ID", async () => {
     const session = createSession(mockSigner());
     const requestId = "get-info-request";
-    await session.handle(payload("get_info", [], requestId));
+    const info = await session.handle(payload("get_info", [], requestId));
 
-    expect(() => session.handle(payload("get_result", [], requestId))).toThrow(
-      expect.objectContaining({
-        code: SignerJsonRpcErrorCode.InvalidSession,
-      }),
-    );
+    await expect(
+      session.handle(payload("get_result", [], requestId)),
+    ).resolves.toEqual({ status: "completed", result: info });
   });
 
   it("caches completed results and rejects duplicate request IDs", async () => {
@@ -238,7 +238,7 @@ describe("SignerJsonRpcProviderSession", () => {
 
     await expect(session.handle(request)).resolves.toBe("identity");
     await expect(
-      session.handle(payload("get_result", [], "same-request", sessionId)),
+      session.handle(payload("get_result", [], "same-request")),
     ).resolves.toEqual({ status: "completed", result: "identity" });
     expect(() => session.handle(request)).toThrow(
       new JsonRpcError({
@@ -263,7 +263,7 @@ describe("SignerJsonRpcProviderSession", () => {
     await vi.advanceTimersByTimeAsync(120_000);
 
     await expect(
-      session.handle(payload("get_result", [], "retained-request", sessionId)),
+      session.handle(payload("get_result", [], "retained-request")),
     ).resolves.toEqual({ status: "completed", result: "identity" });
   });
 
@@ -279,9 +279,7 @@ describe("SignerJsonRpcProviderSession", () => {
     await session.handle(
       payload("get_identity", [], "retrieved-request", sessionId),
     );
-    await session.handle(
-      payload("get_result", [], "retrieved-request", sessionId),
-    );
+    await session.handle(payload("get_result", [], "retrieved-request"));
 
     for (let i = 0; i < 126; i++) {
       await session.handle(
@@ -291,10 +289,10 @@ describe("SignerJsonRpcProviderSession", () => {
     await vi.advanceTimersByTimeAsync(120_000);
 
     await expect(
-      session.handle(payload("get_result", [], "retrieved-request", sessionId)),
+      session.handle(payload("get_result", [], "retrieved-request")),
     ).resolves.toEqual({ status: "not_found" });
     await expect(
-      session.handle(payload("get_result", [], "unretrieved-0", sessionId)),
+      session.handle(payload("get_result", [], "unretrieved-0")),
     ).resolves.toEqual({ status: "completed", result: "identity" });
   });
 
@@ -316,7 +314,7 @@ describe("SignerJsonRpcProviderSession", () => {
       session.handle(payload("get_identity", [], "failed-request", sessionId)),
     ).rejects.toBe(error);
     await expect(
-      session.handle(payload("get_result", [], "failed-request", sessionId)),
+      session.handle(payload("get_result", [], "failed-request")),
     ).rejects.toBe(error);
   });
 

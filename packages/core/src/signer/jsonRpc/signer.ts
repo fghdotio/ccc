@@ -31,6 +31,8 @@ export type SignerJsonRpcConfig = Omit<
 const GET_RESULT_RETRY_DELAYS = [1_000, 2_000, 4_000, 8_000] as const;
 const GET_RESULT_RETRY_REPEAT_MS = 10_000;
 const GET_RESULT_TIMEOUT_MS = 20_000;
+const REQUEST_RETRY_DELAYS = [5_000, 10_000, 20_000] as const;
+const REQUEST_TIMEOUT_MS = 10_000;
 
 export class SignerJsonRpc extends Signer {
   private connecting?: Promise<void>;
@@ -38,6 +40,7 @@ export class SignerJsonRpc extends Signer {
   private scriptsPromise?: Promise<Script[]>;
   private internalAddressPromise?: Promise<string>;
   private identityPromise?: Promise<string>;
+  private requestsController = new AbortController();
   private readonly replacedListeners = new Set<() => void>();
 
   private constructor(
@@ -133,6 +136,9 @@ export class SignerJsonRpc extends Signer {
   }
 
   replace() {
+    const requestsController = this.requestsController;
+    this.requestsController = new AbortController();
+    requestsController.abort(new Error("Signer JSON-RPC was replaced"));
     this.connecting = undefined;
     this.clearReadCache();
     const listeners = [...this.replacedListeners];
@@ -249,29 +255,51 @@ export class SignerJsonRpc extends Signer {
   ): Promise<unknown> {
     const requestId = hexFrom(randomBytes(16));
     const sessionId = method === "get_info" ? undefined : this.info.sessionId;
+    const signal = this.requestsController.signal;
 
-    const result = this.requestor
-      .request(
-        method,
-        [
-          {
-            request_id: requestId,
-            ...(sessionId ? { session_id: sessionId } : {}),
-          },
-          ...params,
-        ],
-        inTransformers ? [undefined, ...inTransformers] : undefined,
-        outTransformer,
-      )
-      .catch((cause: unknown) => {
-        if (cause instanceof JsonRpcError) throw cause;
-        if (!sessionId) throw cause;
+    const result = retry(
+      REQUEST_RETRY_DELAYS,
+      async ({ resolve, reject }) => {
+        try {
+          return resolve(
+            await this.requestor.request(
+              method,
+              [
+                {
+                  request_id: requestId,
+                  ...(sessionId ? { session_id: sessionId } : {}),
+                },
+                ...params,
+              ],
+              inTransformers ? [undefined, ...inTransformers] : undefined,
+              outTransformer,
+              { signal, timeout: REQUEST_TIMEOUT_MS },
+            ),
+          );
+        } catch (cause) {
+          if (cause instanceof JsonRpcError) {
+            return reject(cause);
+          }
+          throw cause;
+        }
+      },
+      { signal },
+    ).catch((cause: unknown) => {
+      signal.throwIfAborted();
+      if (
+        cause instanceof JsonRpcError &&
+        cause.code !== Number(SignerJsonRpcErrorCode.DuplicateRequestId)
+      ) {
+        throw cause;
+      }
 
-        return this.recoverResult(requestId, sessionId, outTransformer);
-      });
+      return this.recoverResult(requestId, cause, signal, outTransformer);
+    });
 
     try {
-      return await result;
+      const value = await result;
+      signal.throwIfAborted();
+      return value;
     } catch (cause) {
       if (
         cause instanceof JsonRpcError &&
@@ -285,7 +313,8 @@ export class SignerJsonRpc extends Signer {
 
   private async recoverResult(
     requestId: string,
-    sessionId: string,
+    requestError: unknown,
+    signal: AbortSignal,
     outTransformer?: Parameters<RequestorJsonRpc["request"]>[3],
   ) {
     return retry(
@@ -295,28 +324,31 @@ export class SignerJsonRpc extends Signer {
           const result = await retry<SignerJsonRpcResultRecord>(
             GET_RESULT_RETRY_DELAYS,
             async ({ resolve, reject }) => {
-              await waitForAvailability();
+              await waitForAvailability(signal);
 
               try {
                 return resolve(
                   (await this.requestor.request(
                     "get_result",
-                    [{ session_id: sessionId }, requestId],
+                    [{}, requestId],
                     undefined,
                     undefined,
-                    { timeout: GET_RESULT_TIMEOUT_MS },
+                    { signal, timeout: GET_RESULT_TIMEOUT_MS },
                   )) as SignerJsonRpcResultRecord,
                 );
               } catch (cause) {
-                if (cause instanceof JsonRpcError) return reject(cause);
+                if (cause instanceof JsonRpcError) {
+                  return reject(cause);
+                }
                 throw cause;
               }
             },
-            { repeat: GET_RESULT_RETRY_REPEAT_MS },
+            { repeat: GET_RESULT_RETRY_REPEAT_MS, signal },
           );
+          signal.throwIfAborted();
 
           if (result.status === "not_found") {
-            return reject(new Error("Signer request result was not found"));
+            return reject(requestError);
           }
           if (result.status === "pending") {
             return next();
@@ -331,7 +363,7 @@ export class SignerJsonRpc extends Signer {
           return reject(cause);
         }
       },
-      { repeat: 0 },
+      { repeat: 0, signal },
     );
   }
 }
