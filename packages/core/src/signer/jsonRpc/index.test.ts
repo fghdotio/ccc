@@ -373,6 +373,62 @@ describe("SignerJsonRpc", () => {
     }
   });
 
+  it("limits pending result polling to once every five seconds", async () => {
+    vi.useFakeTimers();
+    let getResultRequests = 0;
+    const transport: JsonRpcTransport = {
+      async request(payload) {
+        if (payload.method === "get_info") {
+          return response(payload, infoResult());
+        }
+        if (payload.method === "get_result") {
+          getResultRequests += 1;
+          if (getResultRequests === 2) {
+            await new Promise((resolve) => setTimeout(resolve, 10_000));
+          }
+          return response(
+            payload,
+            getResultRequests < 3
+              ? { status: "pending" }
+              : { status: "completed", result: "identity" },
+          );
+        }
+        return {
+          jsonrpc: "2.0",
+          id: payload.id,
+          error: {
+            code: SignerJsonRpcErrorCode.DuplicateRequestId,
+            message: "Request ID already exists",
+          },
+        };
+      },
+    };
+
+    try {
+      const signer = await SignerJsonRpc.new(new ClientPublicTestnet(), {
+        transport,
+      });
+      const identity = signer.getIdentity();
+
+      await vi.advanceTimersByTimeAsync(0);
+      expect(getResultRequests).toBe(1);
+      await vi.advanceTimersByTimeAsync(4_999);
+      expect(getResultRequests).toBe(1);
+      await vi.advanceTimersByTimeAsync(1);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(getResultRequests).toBe(2);
+      await vi.advanceTimersByTimeAsync(9_999);
+      expect(getResultRequests).toBe(2);
+      await vi.advanceTimersByTimeAsync(1);
+      await vi.advanceTimersByTimeAsync(1);
+
+      await expect(identity).resolves.toBe("identity");
+      expect(getResultRequests).toBe(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("stops request retries when replaced", async () => {
     vi.useFakeTimers();
     let identityRequests = 0;

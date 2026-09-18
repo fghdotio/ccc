@@ -8,7 +8,7 @@ import {
 } from "../../client/jsonRpc/advanced.js";
 import { hexFrom } from "../../hex/index.js";
 import { JsonRpcError, RequestorJsonRpc } from "../../jsonRpc/index.js";
-import { retry, waitForAvailability } from "../../utils/index.js";
+import { retry, sleep, waitForAvailability } from "../../utils/index.js";
 import { Signer } from "../signer/index.js";
 import {
   SignerJsonRpcErrorCode,
@@ -29,6 +29,7 @@ export type SignerJsonRpcConfig = Omit<
 };
 
 const GET_RESULT_RETRY_DELAYS = [1_000, 2_000, 4_000, 8_000] as const;
+const GET_RESULT_MIN_POLL_INTERVAL_MS = 5_000;
 const GET_RESULT_RETRY_REPEAT_MS = 10_000;
 const GET_RESULT_TIMEOUT_MS = 20_000;
 const REQUEST_RETRY_DELAYS = [5_000, 10_000, 20_000] as const;
@@ -321,10 +322,12 @@ export class SignerJsonRpc extends Signer {
       [],
       async ({ resolve, reject, next }) => {
         try {
+          let getResultStartedAt = Date.now();
           const result = await retry<SignerJsonRpcResultRecord>(
             GET_RESULT_RETRY_DELAYS,
             async ({ resolve, reject }) => {
               await waitForAvailability(signal);
+              getResultStartedAt = Date.now();
 
               try {
                 return resolve(
@@ -351,6 +354,12 @@ export class SignerJsonRpc extends Signer {
             return reject(requestError);
           }
           if (result.status === "pending") {
+            const remaining =
+              GET_RESULT_MIN_POLL_INTERVAL_MS -
+              (Date.now() - getResultStartedAt);
+            if (remaining > 0) {
+              await sleep(remaining, signal);
+            }
             return next();
           }
           if (result.status !== "completed" || !("result" in result)) {
