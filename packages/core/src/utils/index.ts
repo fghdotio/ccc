@@ -326,7 +326,9 @@ export async function waitForAvailability(signal?: AbortSignal): Promise<void> {
     }
 
     function onAbort() {
-      if (settled) return;
+      if (settled) {
+        return;
+      }
 
       settled = true;
       cleanup();

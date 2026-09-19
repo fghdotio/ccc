@@ -173,7 +173,9 @@ describe("Client", () => {
       try {
         await c.getTip();
       } catch (e) {
-        if (e instanceof ErrorClientVerification) return e;
+        if (e instanceof ErrorClientVerification) {
+          return e;
+        }
       }
       return undefined;
     }
