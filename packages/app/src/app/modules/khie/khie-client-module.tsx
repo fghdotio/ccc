@@ -673,7 +673,11 @@ export function KhieClientModule({
               </div>
             </>
           ) : (
-            <p className={styles["request-idle"]}>Ready for requests…</p>
+            <p className={styles["request-idle"]}>
+              Connected to an app, waiting for requests…
+              <br />
+              Return to the app to continue.
+            </p>
           )}
         </section>
       </div>
