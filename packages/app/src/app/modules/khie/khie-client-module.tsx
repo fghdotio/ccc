@@ -1692,12 +1692,6 @@ function TransactionCellGroup({
   empty: string;
   title: string;
 }) {
-  const totalCapacity =
-    cells?.reduce(
-      (total, cell) => total + transactionCellCapacity(cell),
-      ccc.Zero,
-    ) ?? ccc.Zero;
-
   return (
     <section className={styles["transaction-cell-group"]}>
       <div className={styles["transaction-cell-heading"]}>
@@ -1711,12 +1705,7 @@ function TransactionCellGroup({
           <p className={styles["transaction-cell-status"]}>{empty}</p>
         ) : (
           cells.map((cell) => (
-            <TransactionCellItem
-              cell={cell}
-              client={client}
-              key={cell.key}
-              totalCapacity={totalCapacity}
-            />
+            <TransactionCellItem cell={cell} client={client} key={cell.key} />
           ))
         )}
       </div>
@@ -1727,17 +1716,22 @@ function TransactionCellGroup({
 function TransactionCellItem({
   cell,
   client,
-  totalCapacity,
 }: {
   cell: TransactionCellView;
   client: ccc.Client;
-  totalCapacity: bigint;
 }) {
   const { cellOutput } = cell;
-  const capacity = transactionCellCapacity(cell);
+  const totalCapacity = transactionCellCapacity(cell);
+  const freeCapacity = transactionCellFreeCapacity(cell);
   const capacityShare =
     cellOutput && totalCapacity > ccc.Zero
-      ? Number((capacity * ccc.numFrom(1000)) / totalCapacity) / 10
+      ? Math.min(
+          100,
+          Math.max(
+            0,
+            Number((freeCapacity * ccc.numFrom(1000)) / totalCapacity) / 10,
+          ),
+        )
       : 0;
   const style = {
     "--capacity-share": `${capacityShare}%`,
@@ -1931,6 +1925,22 @@ function transactionCellCapacity(cell: TransactionCellView) {
   return (
     (cell.cellOutput?.capacity ?? ccc.Zero) + (cell.extraCapacity ?? ccc.Zero)
   );
+}
+
+function transactionCellOccupiedCapacity(cell: TransactionCellView) {
+  if (!cell.cellOutput) {
+    return ccc.Zero;
+  }
+  const output = ccc.CellOutput.from(cell.cellOutput);
+  const occupiedSize =
+    output.occupiedSize + ccc.bytesFrom(cell.outputData ?? "0x").length;
+  return ccc.fixedPointFrom(occupiedSize);
+}
+
+function transactionCellFreeCapacity(cell: TransactionCellView) {
+  const total = transactionCellCapacity(cell);
+  const occupied = transactionCellOccupiedCapacity(cell);
+  return total > occupied ? total - occupied : ccc.Zero;
 }
 
 function transactionFeeRate(transaction: ccc.Transaction, fee: ccc.Num) {
