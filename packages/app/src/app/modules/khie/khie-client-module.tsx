@@ -1083,17 +1083,30 @@ function RemotePeerDetails({
       <div className={styles["peer-overview"]}>
         {peer ? (
           <div className={styles["peer-copy"]}>
-            <div className={styles["peer-primary"]}>
+            <bdi className={styles["peer-name"]} dir="auto" title={name}>
+              {name}
+            </bdi>
+            <div className={styles["peer-status"]}>
               <span className={styles["peer-path"]} data-direct={peer.direct}>
                 {path}
               </span>
-              <bdi className={styles["peer-name"]} dir="auto" title={name}>
-                {name}
-              </bdi>
+              <span className={styles["peer-separator"]}>·</span>
+              <span className={styles["peer-last-seen"]}>
+                {peer.active ? (
+                  "Active"
+                ) : peer.lastSeenAt === undefined ? (
+                  "Last seen not available"
+                ) : (
+                  <>
+                    Last seen{" "}
+                    <InactiveLastSeen
+                      key={peer.lastSeenAt}
+                      timestamp={peer.lastSeenAt}
+                    />
+                  </>
+                )}
+              </span>
             </div>
-            <span className={styles["peer-agent"]} title={peer.agentVersion}>
-              {peer.agentVersion ?? "Unknown agent"}
-            </span>
           </div>
         ) : (
           <p className={styles["peer-loading"]}>Loading remote peer details…</p>
@@ -1104,32 +1117,6 @@ function RemotePeerDetails({
           </button>
         </div>
       </div>
-
-      {peer ? (
-        <div className={styles["peer-times"]}>
-          <div className={styles["peer-time"]}>
-            <span>Peer ID</span>
-            <code className={styles["peer-id"]} title={peer.id}>
-              {peer.id}
-            </code>
-          </div>
-          <div className={styles["peer-time"]}>
-            <span>Last seen</span>
-            <strong>
-              {peer.active ? (
-                "Active"
-              ) : peer.lastSeenAt === undefined ? (
-                "Not available"
-              ) : (
-                <InactiveLastSeen
-                  key={peer.lastSeenAt}
-                  timestamp={peer.lastSeenAt}
-                />
-              )}
-            </strong>
-          </div>
-        </div>
-      ) : null}
     </section>
   );
 }

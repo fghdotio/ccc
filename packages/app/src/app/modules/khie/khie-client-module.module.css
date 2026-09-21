@@ -900,22 +900,23 @@
   gap: 6px;
 }
 
-.peer-primary {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: 12px;
-}
-
-.peer-agent {
+.peer-name {
   overflow: hidden;
+  flex: 1 1 auto;
   min-width: 0;
-  color: var(--muted);
+  color: var(--ink);
   font:
-    10px/1.35 "Courier New",
+    700 14px/1.35 "Courier New",
     monospace;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.peer-status {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
 }
 
 .peer-path {
@@ -941,55 +942,19 @@
   background: var(--signal);
 }
 
-.peer-name {
-  overflow: hidden;
-  flex: 1 1 auto;
-  min-width: 0;
-  color: var(--ink);
-  font:
-    700 14px/1.35 "Courier New",
-    monospace;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.peer-id {
-  max-width: 150px;
-}
-
-.peer-time > span {
+.peer-separator {
   flex: 0 0 auto;
   color: var(--muted);
   font:
-    700 9px/1.2 "Courier New",
+    700 12px/1 "Courier New",
     monospace;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
 }
 
-.peer-times {
-  display: flex;
-  min-width: 0;
-  margin-top: 4px;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 6px 14px;
-}
-
-.peer-time {
-  display: flex;
-  min-width: 0;
-  align-items: baseline;
-  gap: 6px;
-}
-
-.peer-time code,
-.peer-time time,
-.peer-time strong {
+.peer-last-seen {
   overflow: hidden;
-  color: var(--ink);
+  color: var(--muted);
   font:
-    10px/1.4 "Courier New",
+    700 12px/1 "Courier New",
     monospace;
   text-overflow: ellipsis;
   white-space: nowrap;
