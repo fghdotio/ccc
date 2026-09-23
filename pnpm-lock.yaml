@@ -794,8 +794,8 @@ importers:
         specifier: ^0.2.2
         version: 0.2.2(@typescript/typescript6@6.0.2)
       bitcoinjs-lib:
-        specifier: ^7.0.1
-        version: 7.0.2(@typescript/typescript6@6.0.2)
+        specifier: 7.0.1
+        version: 7.0.1(@typescript/typescript6@6.0.2)
     devDependencies:
       '@eslint/js':
         specifier: ^10.0.1
@@ -1066,8 +1066,8 @@ importers:
         specifier: ^2.0.0
         version: 2.0.0
       bitcoinjs-lib:
-        specifier: ^7.0.0
-        version: 7.0.2(@typescript/typescript6@6.0.2)
+        specifier: 7.0.1
+        version: 7.0.1(@typescript/typescript6@6.0.2)
       isomorphic-ws:
         specifier: ^5.0.0
         version: 5.0.0(ws@8.21.3)
@@ -1538,8 +1538,8 @@ importers:
         specifier: workspace:*
         version: link:../core
       bitcoinjs-lib:
-        specifier: ^7.0.1
-        version: 7.0.2(@typescript/typescript6@6.0.2)
+        specifier: 7.0.1
+        version: 7.0.1(@typescript/typescript6@6.0.2)
       valibot:
         specifier: ^1.4.1
         version: 1.5.0(@typescript/typescript6@6.0.2)
@@ -5694,8 +5694,8 @@ packages:
     resolution: {integrity: sha512-avOnOoLOwdjw1MebWKh3bHqWOH558Q9VpqmRKUv2S63vjw0pnX7Y+yRihxIibgP55twhc7+YfC0IAH43IF5FqQ==}
     engines: {node: '>=18.0.0'}
 
-  bitcoinjs-lib@7.0.2:
-    resolution: {integrity: sha512-ugLk9SR+2gvhpNA7kqQL1eVDKyBNo/rbr+df72nrZj4OOdZvQRHDVtyogPGXAU2MLQimLL7EbUdz95QGh6Th5Q==}
+  bitcoinjs-lib@7.0.1:
+    resolution: {integrity: sha512-vwEmpL5Tpj0I0RBdNkcDMXePoaYSTeKY6mL6/l5esbnTs+jGdPDuLp4NY1hSh6Zk5wSgePygZ4Wx5JJao30Pww==}
     engines: {node: '>=18.0.0'}
 
   blake2b-wasm@2.4.0:
@@ -15032,7 +15032,7 @@ snapshots:
       uint8array-tools: 0.0.10
       varuint-bitcoin: 2.0.1
 
-  bitcoinjs-lib@7.0.2(@typescript/typescript6@6.0.2):
+  bitcoinjs-lib@7.0.1(@typescript/typescript6@6.0.2):
     dependencies:
       '@noble/hashes': 1.8.0
       bech32: 2.0.0
