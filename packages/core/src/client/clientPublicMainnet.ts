@@ -48,14 +48,9 @@ export class ClientPublicMainnet extends ClientJsonRpc {
   }
 
   /**
-   * Creates a Client with a new requestor that borrows an existing Transport.
-   * The caller remains responsible for the transport's lifecycle.
+   * Creates a Client that borrows an existing Transport.
    *
-   * Do not pass the same `JsonRpcTransportWebSocket` to independently created
-   * clients or requestors. Their request IDs can collide, causing responses to
-   * reach the wrong caller or requests to remain unresolved even after timeout.
-   * Reuse one client for concurrent calls, or give each client a separate
-   * transport, for example by calling {@link ClientPublicMainnet.open} for each.
+   * For WebSocket, reuse one client instead of sharing a transport across clients.
    * See {@link RequestorJsonRpc.new} for details.
    */
   static new(

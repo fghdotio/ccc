@@ -10,19 +10,6 @@ import {
 
 const SOCKET_TIMEOUT_GRACE_PERIOD = 10_000;
 
-/**
- * Sends JSON-RPC requests over a WebSocket connection.
- *
- * Request IDs must be unique among pending requests on this transport. Do not
- * share one instance between independently created `RequestorJsonRpc` instances
- * or clients: each requestor starts its own request ID counter at zero.
- * Overlapping requests with the same ID overwrite the transport's pending entry,
- * so a response can reach the wrong caller and the earlier request can remain
- * unresolved even after its timeout.
- *
- * Reuse one requestor or client for concurrent calls, or give each independent
- * requestor or client a separate transport instance.
- */
 export class JsonRpcTransportWebSocket implements JsonRpcTransport {
   private ongoing: Map<
     JsonRpcId,
@@ -47,11 +34,7 @@ export class JsonRpcTransportWebSocket implements JsonRpcTransport {
     private readonly timeout = 30000,
   ) {}
 
-  /**
-   * Opens an owned WebSocket transport. The connection is established on the
-   * first request. Keep the returned Owner and dispose it when the transport is
-   * no longer needed; borrowed references cannot be used after disposal.
-   */
+  /** Opens an owned WebSocket transport. */
   static open(
     url: string,
     timeout = 30000,

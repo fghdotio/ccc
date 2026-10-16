@@ -2,4 +2,4 @@
 "@ckb-ccc/core": patch
 ---
 
-Document WebSocket transport sharing limitations and clarify borrowed transport lifecycles.
+Document WebSocket sharing restrictions and transport ownership.
