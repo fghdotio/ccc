@@ -6,7 +6,11 @@ import {
   ConnectionsRepo,
   ConnectionsRepoLocalStorage,
 } from "../connectionsStorage/index.js";
-import { finalizeSignedInputs, parseSignedPsbt } from "./psbt.js";
+import {
+  finalizeSignedInputs,
+  parseSignedPsbt,
+  parseUnsignedPsbt,
+} from "./psbt.js";
 
 /**
  * Converts CCC-level sign PSBT options into the shape expected by JoyID,
@@ -225,6 +229,7 @@ export class BitcoinSigner extends ccc.SignerBtc {
     const { address } = await this.assertConnection();
     const formattedOptions = ccc.SignPsbtOptions.from(options);
     const unsignedPsbtHex = ccc.hexFrom(psbtHex);
+    const unsigned = parseUnsignedPsbt(unsignedPsbtHex);
 
     const config = this.getConfig();
     const { tx } = await createPopup(
@@ -245,10 +250,7 @@ export class BitcoinSigner extends ccc.SignerBtc {
     );
 
     const signedPsbtHex = ccc.hexFrom(tx);
-    const { unsigned, signed } = parseSignedPsbt(
-      unsignedPsbtHex,
-      signedPsbtHex,
-    );
+    const signed = parseSignedPsbt(unsigned, signedPsbtHex);
     if (!formattedOptions.autoFinalized) {
       return signedPsbtHex;
     }

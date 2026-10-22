@@ -15,8 +15,13 @@ import {
   rpcSuccessResponseMessageSchema,
 } from "./advancedBarrel.js";
 
-// scure drops unknown PSBT fields by default.
-const PSBT_OPTIONS: TxOpts = { unknown: "ignore", proprietary: "ignore" };
+// Keep unknown fields, and accept other signers' inputs even if their script
+// or Taproot metadata doesn't match the UTXO.
+const PSBT_OPTIONS: TxOpts = {
+  unknown: "ignore",
+  proprietary: "ignore",
+  disableScriptCheck: true,
+};
 
 type PsbtInputUpdate = Parameters<Transaction["updateInput"]>[1];
 
@@ -256,12 +261,7 @@ export class Signer extends ccc.SignerBtc {
       // If no unsigned inputs found, the PSBT is already fully signed
       // Let the wallet handle this case (likely a no-op or error)
     } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : String(error);
-      throw new Error(
-        `Failed to parse PSBT hex. Please provide inputsToSign explicitly in options. Original error: ${errorMessage}`,
-        { cause: error },
-      );
+      throw new Error("Invalid PSBT to sign.", { cause: error });
     }
 
     return inputsToSign;
@@ -381,10 +381,15 @@ export class Signer extends ccc.SignerBtc {
       return ccc.hexFrom(ccc.bytesFrom(signedPsbtBase64, "base64"));
     }
 
-    const signedPsbt = Transaction.fromPSBT(
-      ccc.bytesFrom(signedPsbtBase64, "base64"),
-      PSBT_OPTIONS,
-    );
+    let signedPsbt: Transaction;
+    try {
+      signedPsbt = Transaction.fromPSBT(
+        ccc.bytesFrom(signedPsbtBase64, "base64"),
+        PSBT_OPTIONS,
+      );
+    } catch (error) {
+      throw new Error("Xverse returned an invalid PSBT.", { cause: error });
+    }
     this.finalizeSignedInputs(signedPsbt, signInputs);
     return ccc.hexFrom(signedPsbt.toPSBT());
   }

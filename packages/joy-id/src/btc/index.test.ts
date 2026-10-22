@@ -15,6 +15,9 @@ vi.mock("../common/index.js", () => ({
   createPopup: vi.fn(),
 }));
 
+// Same options as the signers.
+const PSBT_OPTS: btc.TxOpts = { unknown: "ignore", disableScriptCheck: true };
+
 const CLIENT = ccc.ClientPublicTestnet.new({
   transport: {
     request: async () => {
@@ -50,16 +53,19 @@ class ConnectionsRepoMemory implements ConnectionsRepo {
   }
 }
 
-function createSigner() {
+function createSigner(
+  addressType: "p2wpkh" | "p2tr" = "p2wpkh",
+  address: string = JOYID.address,
+) {
   return new BitcoinSigner(
     CLIENT,
     "JoyID",
     "",
     undefined,
-    "p2wpkh",
+    addressType,
     undefined,
     new ConnectionsRepoMemory({
-      address: JOYID.address,
+      address,
       publicKey: ccc.hexFrom(JOYID.publicKey),
       keyType: "main_key",
     }),
@@ -71,7 +77,7 @@ function createPsbt(
   scripts: Uint8Array[],
   presign: (tx: btc.Transaction) => void = () => {},
 ): ccc.Hex {
-  const tx = new btc.Transaction({ unknown: "ignore" });
+  const tx = new btc.Transaction(PSBT_OPTS);
   scripts.forEach((script, i) => {
     tx.addInput({
       txid: new Uint8Array(32).fill(i + 1),
@@ -95,9 +101,7 @@ function staleJoyIdSignature(): [Uint8Array, Uint8Array] {
 }
 
 function inputsOf(psbtHex: ccc.Hex) {
-  const tx = btc.Transaction.fromPSBT(ccc.bytesFrom(psbtHex), {
-    unknown: "ignore",
-  });
+  const tx = btc.Transaction.fromPSBT(ccc.bytesFrom(psbtHex), PSBT_OPTS);
   return Array.from({ length: tx.inputsLength }, (_, i) => tx.getInput(i));
 }
 
@@ -131,7 +135,7 @@ function mockJoyIdSigning(
   vi.mocked(createPopup).mockImplementation(async (popup) => {
     const tx = btc.Transaction.fromPSBT(
       ccc.bytesFrom(requestSentTo(popup).tx as string),
-      { unknown: "ignore" },
+      PSBT_OPTS,
     );
     sign(tx);
     return { tx: ccc.hexFrom(tx.toPSBT()).slice(2) };
@@ -268,6 +272,71 @@ describe("BitcoinSigner.signPsbt", () => {
     const [input] = inputsOf(signed);
     expect(input.finalScriptWitness).toBeDefined();
     expect(input.unknown).toHaveLength(1);
+  });
+
+  it("should finalize inputs of a Taproot signer", async () => {
+    const taproot = btc.p2tr(
+      JOYID.publicKey.slice(1),
+      undefined,
+      btc.TEST_NETWORK,
+    );
+    mockJoyIdSigning((tx) => tx.signIdx(JOYID.privateKey, 0));
+    const tx = new btc.Transaction(PSBT_OPTS);
+    tx.addInput({
+      txid: new Uint8Array(32).fill(1),
+      index: 0,
+      witnessUtxo: { script: taproot.script, amount: 10000n },
+      tapInternalKey: taproot.tapInternalKey,
+    });
+    tx.addOutputAddress(taproot.address, 9000n, btc.TEST_NETWORK);
+
+    const signed = await createSigner("p2tr", taproot.address).signPsbt(
+      ccc.hexFrom(tx.toPSBT()),
+    );
+
+    const [input] = inputsOf(signed);
+    expect(input.finalScriptWitness).toHaveLength(1);
+    expect(input.finalScriptWitness?.[0]).toHaveLength(64);
+    expect(input.tapInternalKey).toBeUndefined();
+  });
+
+  it.each([true, false])(
+    "should ignore mismatched Taproot metadata on other signers' inputs (autoFinalized: %s)",
+    async (autoFinalized) => {
+      mockJoyIdSigning();
+      const foreign = btc.p2tr(
+        OTHER.publicKey.slice(1),
+        undefined,
+        btc.TEST_NETWORK,
+      );
+      const psbtHex = createPsbt([JOYID.script], (tx) =>
+        tx.addInput({
+          txid: new Uint8Array(32).fill(9),
+          index: 0,
+          witnessUtxo: { script: foreign.script, amount: 10000n },
+          // Not the key behind the output
+          tapInternalKey: JOYID.publicKey.slice(1),
+        }),
+      );
+
+      const signed = await createSigner().signPsbt(psbtHex, { autoFinalized });
+
+      const [mine, theirs] = inputsOf(signed);
+      if (autoFinalized) {
+        expect(mine.finalScriptWitness).toBeDefined();
+      } else {
+        expect(mine.partialSig).toHaveLength(1);
+      }
+      expect(theirs.finalScriptWitness).toBeUndefined();
+      expect(theirs.tapInternalKey).toEqual(JOYID.publicKey.slice(1));
+    },
+  );
+
+  it("should reject an invalid PSBT before opening JoyID", async () => {
+    await expect(
+      createSigner().signPsbt("0x70736274ff0100aabb"),
+    ).rejects.toThrow("Invalid PSBT to sign");
+    expect(createPopup).not.toHaveBeenCalled();
   });
 
   it("should finalize Taproot key-path inputs", async () => {

@@ -4,8 +4,13 @@ import { Transaction, type TxOpts } from "@scure/btc-signer";
 type PsbtInput = ReturnType<Transaction["getInput"]>;
 type PsbtInputUpdate = Parameters<Transaction["updateInput"]>[1];
 
-// scure drops unknown PSBT fields by default.
-const PSBT_OPTIONS: TxOpts = { unknown: "ignore", proprietary: "ignore" };
+// Keep unknown fields, and accept other signers' inputs even if their script
+// or Taproot metadata doesn't match the UTXO.
+const PSBT_OPTIONS: TxOpts = {
+  unknown: "ignore",
+  proprietary: "ignore",
+  disableScriptCheck: true,
+};
 
 // finalizeIdx needs every input's UTXO to check the fee, so finalize the input
 // alone.
@@ -83,21 +88,25 @@ function finalizeInputs(tx: Transaction, indexes: Set<number>): ccc.Hex {
   return ccc.hexFrom(tx.toPSBT());
 }
 
+export function parseUnsignedPsbt(psbtHex: ccc.Hex): Transaction {
+  try {
+    return Transaction.fromPSBT(ccc.bytesFrom(psbtHex), PSBT_OPTIONS);
+  } catch (error) {
+    throw new Error("Invalid PSBT to sign.", { cause: error });
+  }
+}
+
 /**
  * Checks that JoyID returned a PSBT of the same transaction.
  */
 export function parseSignedPsbt(
-  unsignedPsbtHex: ccc.Hex,
+  unsigned: Transaction,
   signedPsbtHex: ccc.Hex,
-): { unsigned: Transaction; signed: Transaction } {
+): Transaction {
   if (!signedPsbtHex.startsWith("0x70736274ff")) {
     throw new Error("JoyID did not return a PSBT.");
   }
 
-  const unsigned = Transaction.fromPSBT(
-    ccc.bytesFrom(unsignedPsbtHex),
-    PSBT_OPTIONS,
-  );
   let signed: Transaction;
   try {
     signed = Transaction.fromPSBT(ccc.bytesFrom(signedPsbtHex), PSBT_OPTIONS);
@@ -109,7 +118,7 @@ export function parseSignedPsbt(
     throw new Error("JoyID returned a PSBT for a different transaction.");
   }
 
-  return { unsigned, signed };
+  return signed;
 }
 
 /**
