@@ -332,6 +332,40 @@ describe("BitcoinSigner.signPsbt", () => {
     },
   );
 
+  it.each([true, false])(
+    "should not finalize a signed input whose metadata doesn't match its UTXO (autoFinalized: %s)",
+    async (autoFinalized) => {
+      const taproot = btc.p2tr(
+        JOYID.publicKey.slice(1),
+        undefined,
+        btc.TEST_NETWORK,
+      );
+      mockJoyIdSigning((tx) =>
+        tx.updateInput(0, { tapKeySig: new Uint8Array(64).fill(1) }),
+      );
+      const tx = new btc.Transaction(PSBT_OPTS);
+      tx.addInput({
+        txid: new Uint8Array(32).fill(1),
+        index: 0,
+        witnessUtxo: { script: taproot.script, amount: 10000n },
+        // Not the key behind the output
+        tapInternalKey: OTHER.publicKey.slice(1),
+      });
+      tx.addOutputAddress(taproot.address, 9000n, btc.TEST_NETWORK);
+
+      const signing = createSigner("p2tr", taproot.address).signPsbt(
+        ccc.hexFrom(tx.toPSBT()),
+        { autoFinalized },
+      );
+
+      if (autoFinalized) {
+        await expect(signing).rejects.toThrow("Use { autoFinalized: false }");
+      } else {
+        expect(inputsOf(await signing)[0].tapKeySig).toBeDefined();
+      }
+    },
+  );
+
   it("should reject an invalid PSBT before opening JoyID", async () => {
     await expect(
       createSigner().signPsbt("0x70736274ff0100aabb"),

@@ -12,11 +12,14 @@ const PSBT_OPTIONS: TxOpts = {
   disableScriptCheck: true,
 };
 
+// An input being finalized must match its UTXO, or its witness can't be valid.
+const FINALIZE_OPTIONS: TxOpts = { ...PSBT_OPTIONS, disableScriptCheck: false };
+
 // finalizeIdx needs every input's UTXO to check the fee, so finalize the input
 // alone.
 function finalizeInput(tx: Transaction, index: number) {
   const input = tx.getInput(index);
-  const scratch = new Transaction(PSBT_OPTIONS);
+  const scratch = new Transaction(FINALIZE_OPTIONS);
   scratch.addInput(input);
   scratch.finalizeIdx(0);
   const finalized = scratch.getInput(0);

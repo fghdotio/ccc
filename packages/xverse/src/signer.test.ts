@@ -224,6 +224,24 @@ describe("Signer.signPsbt", () => {
       },
     );
 
+    it("should not finalize them when the wallet signs them", async () => {
+      const { signer, signPsbt } = createSigner();
+      // The wallet signs every requested input, trusting the wrong metadata
+      signPsbt.mockImplementationOnce((params) => {
+        const tx = btc.Transaction.fromPSBT(
+          ccc.bytesFrom(params.psbt, "base64"),
+          PSBT_OPTS,
+        );
+        tx.signIdx(WALLET.privateKey, 0);
+        tx.updateInput(1, { tapKeySig: new Uint8Array(64).fill(1) });
+        return { psbt: ccc.bytesTo(tx.toPSBT(), "base64") };
+      });
+
+      await expect(signer.signPsbt(withForeignInput())).rejects.toThrow(
+        "Use { autoFinalized: false }",
+      );
+    });
+
     it("should still find the inputs to sign", async () => {
       const { signer, signPsbt } = createSigner({ sign: false });
 
